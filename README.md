@@ -38,7 +38,7 @@ embed = create_openai_embedder("text-embedding-3-small")
 store = SQLiteStore("./agent_memory.db")
 vector = NumpyVectorStore("./agent_memory_vectors.db")
 
-file_memory_tool = FileMemory(
+file_memory = FileMemory(
     user_id="user_123",
     storage=store,
     vector_store=vector,
@@ -46,7 +46,7 @@ file_memory_tool = FileMemory(
     tool_mode=True,
 )
 
-graph_memory_tool = GraphMemory(
+graph_memory = GraphMemory(
     user_id="user_123",
     storage=store,
     vector_store=vector,
@@ -55,20 +55,34 @@ graph_memory_tool = GraphMemory(
 )
 ```
 
-### Inject tool instructions into your agent
+Your agent framework should expect agent tools to be **callable functions**, you can pass the bound methods:
 
 ```python
+# register tool functions
+write_file_memory_tool = file_memory.memorize
+read_file_memory_tool = file_memory.retrieve
+write_graph_memory_tool = graph_memory.memorize
+read_graph_memory_tool = graph_memory.retrieve
+
+# inject agent system prompt with memory tool-use instructions (out of the box)
+# Or you can define tool-use instructions yourself if you want
 instruction = (
     load_prompt("main_agent_system_prompt.md")
     .replace(
-        "<memory_tools>",
-        file_memory_tool.tool_use_instruction + "\n\n" + graph_memory_tool.tool_use_instruction,
+        "<memory_tool_instructions>",
+        file_memory.tool_use_instruction + "\n\n" + graph_memory.tool_use_instruction,
     )
 )
 
+# define your agent and include the memory tools
 agent = Agent(
     model="openai/gpt-5.2",
-    tools=[file_memory_tool, graph_memory_tool],
+    tools=[
+        write_file_memory_tool,
+        read_file_memory_tool,
+        write_graph_memory_tool,
+        read_graph_memory_tool,
+    ],
     instruction=instruction,
     # ...
 )
@@ -76,39 +90,93 @@ agent = Agent(
 
 ### Tool-mode write/read (agent-controlled)
 
-```python
-# File memory write: agent provides atomic items + summaries
-await file_memory_tool.memorize(
-    "I prefer Python for scripting and I work at Acme.",
-    items=[
-        {"content": "User prefers Python for scripting", "category": "preferences"},
-        {"content": "User works at Acme", "category": "work"},
-    ],
-    summaries={
-        "preferences": "- Prefers Python for scripting",
-        "work": "- Works at Acme",
-    },
-)
+Below is an example **LLM tool call trace** (JSON-style) showing how an agent would call the tools and receive responses:
 
-# File memory read: agent chooses retrieval depth
-context = await file_memory_tool.retrieve(
-    "What language does the user prefer?",
-    level="items",            # summaries | items | resources | auto
-    search_query="python",    # optional keyword query
-)
-
-# Graph memory write: agent provides clean triplets
-await graph_memory_tool.memorize(
-    "I work at Acme Corp.",
-    triplets=[{"subject": "User", "predicate": "works_at", "object": "Acme Corp", "status": "current"}],
-)
-
-# Graph memory read: agent chooses graph depth
-results = await graph_memory_tool.retrieve(
-    "Where does the user work?",
-    entities=["User"],
-    level="graph_only",        # graph_only | graph_then_vector | vector_only
-)
+```json
+[
+  {
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "name": "FileMemory.memorize",
+        "arguments": {
+          "text": "I prefer Python for scripting and I work at Acme.",
+          "items": [
+            {"content": "User prefers Python for scripting", "category": "preferences"},
+            {"content": "User works at Acme", "category": "work"}
+          ],
+          "summaries": {
+            "preferences": "- Prefers Python for scripting",
+            "work": "- Works at Acme"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "name": "FileMemory.memorize",
+    "content": [{"id": "item_1"}, {"id": "item_2"}]
+  },
+  {
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "name": "FileMemory.retrieve",
+        "arguments": {
+          "query": "What language does the user prefer?",
+          "level": "items",
+          "search_query": "python"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "name": "FileMemory.retrieve",
+    "content": "## Retrieved Items
+- User prefers Python for scripting"
+  },
+  {
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "name": "GraphMemory.memorize",
+        "arguments": {
+          "text": "I work at Acme Corp.",
+          "triplets": [
+            {"subject": "User", "predicate": "works_at", "object": "Acme Corp", "status": "current"}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "name": "GraphMemory.memorize",
+    "content": [{"subject": "User", "predicate": "works_at", "object": "Acme Corp", "status": "current"}]
+  },
+  {
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "name": "GraphMemory.retrieve",
+        "arguments": {
+          "query": "Where does the user work?",
+          "entities": ["User"],
+          "level": "graph_only"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "name": "GraphMemory.retrieve",
+    "content": [
+      {"text": "User works_at Acme Corp (current)", "score": 0.8}
+    ]
+  }
+]
 ```
 
 ## Tool Instructions (Out-of-the-box)
@@ -156,9 +224,11 @@ async with Memory("user_123", llm=llm) as mem:
     await mem.maintain("monthly")   # reindex embeddings
 ```
 
-## Internal LLM Usage (Optional)
+## Using Separate LLMs For File/Graph Memories (Optional)
 
-If you want the memory system itself to run extraction/classification/summarization (not agent-driven), you can use the `Memory` facade. This is optional and mainly for quick prototypes or non-tool workflows.
+If you want the memory system itself to run extraction/classification/summarization (e.g., run `memorize()` manually for selective AI agent conversations, **not agent-driven**), you can use the `Memory` facade. This is optional and mainly for quick prototypes or non-tool workflows.
+
+Note: this essentially is independent LLM chains running separate memory manipulations offline without a broad context you get when you let an agent use memory as tools, so expect certain level of memory quality degradation compared to `tool_mode=True`
 
 ```python
 from simple_agent_memory import Memory

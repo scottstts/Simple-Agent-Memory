@@ -1,38 +1,66 @@
-FILE_MEMORY_TOOL_INSTRUCTIONS = """File Memory (tool_mode):
+FILE_MEMORY_TOOL_INSTRUCTIONS = """File Memory
 
-Use for preferences, habits, schedules, goals, personal facts, and narrative context.
-Inputs:
-- items: list of {content, category}
-- summaries: dict {category: markdown summary}
+Purpose:
+- Store and retrieve narrative facts: preferences, habits, schedules, goals, personal details.
 
-Retrieval controls:
-- level: "summaries" | "items" | "resources" | "auto"
-- categories: list of category names to load
-- search_query: keyword query for items/resources
+Tools:
+1) FileMemory.memorize (WRITE)
+   When to use: new user facts, corrections, or updates that are narrative/atomic.
+   Inputs:
+   - text: original user utterance (string)
+   - items: list of {content, category}
+   - summaries: dict {category: markdown summary}
+   Output:
+   - list of stored MemoryItem objects (ids/metadata)
+
+2) FileMemory.retrieve (READ)
+   When to use: answer questions about preferences, schedules, personal info.
+   Inputs:
+   - query: user question
+   - level: "summaries" | "items" | "resources" | "auto"
+   - categories: list of categories to load (optional)
+   - search_query: keyword query (optional)
+   Output:
+   - formatted text block (summaries/items/resources)
 
 Guidance:
 - Keep items atomic and explicit.
-- Summaries should be short, current, and conflict-resolved.
+- Prefer these categories when they fit: work, preferences, personal, health, schedule, travel, tech, relationships.
+- Summaries should be short, current, and conflict‑resolved.
 """
 
 
-GRAPH_MEMORY_TOOL_INSTRUCTIONS = """Graph Memory (tool_mode):
+GRAPH_MEMORY_TOOL_INSTRUCTIONS = """Graph Memory
 
-Use for relational facts: subject-predicate-object.
+Purpose:
+- Store and retrieve relational facts as subject–predicate–object triplets.
+
 Triplet schema:
 {subject, predicate, object, status}
 status = "current" | "past" | "uncertain"
 
+Tools:
+1) GraphMemory.memorize (WRITE)
+   When to use: stable relations (works_at, manages, owns, located_in, etc.).
+   Inputs:
+   - text: original user utterance (string)
+   - triplets: list of {subject, predicate, object, status}
+   Output:
+   - list of stored Triplet objects
+
+2) GraphMemory.retrieve (READ)
+   When to use: answer relationship/identity questions.
+   Inputs:
+   - query: user question
+   - entities: list of entity names (required in tool_mode)
+   - level: "graph_only" | "graph_then_vector" | "vector_only"
+   Output:
+   - list of RetrievalResult objects (text includes status label)
+
 Guidance:
 - Use clean entities for subject/object (names, orgs, roles).
 - Avoid long narrative objects; split into multiple triplets.
-- Use "past" for historical facts rather than deleting them.
-
-Retrieval controls:
-- level: "graph_only" | "graph_then_vector" | "vector_only"
-- entities: list of entity names to retrieve from the graph
-
-Notes:
-- Graph retrieval annotates facts with status, e.g. "(current)" or "(past)".
+- Use \"past\" for historical facts rather than deleting them.
+- Graph retrieval annotates facts with status, e.g. \"(current)\" or \"(past)\".
 - Current facts are prioritized over past facts.
 """
