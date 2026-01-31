@@ -134,8 +134,7 @@ Below is an example **LLM tool call trace** (JSON-style) showing how an agent wo
   {
     "role": "tool",
     "name": "FileMemory.retrieve",
-    "content": "## Retrieved Items
-- User prefers Python for scripting"
+    "content": "## Retrieved Items\n- User prefers Python for scripting"
   },
   {
     "role": "assistant",
