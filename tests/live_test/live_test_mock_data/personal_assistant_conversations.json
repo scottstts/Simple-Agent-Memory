@@ -1,0 +1,68 @@
+{
+  "assistant_name": "Avery",
+  "user_name": "Jordan",
+  "sessions": [
+    {
+      "title": "Onboarding and Preferences",
+      "messages": [
+        {"role": "user", "content": "Hey Avery, quick intro: I'm Jordan. I mostly script in Python. For systems work I dabble in Rust."},
+        {"role": "assistant", "content": "Great to meet you, Jordan. I'll keep that in mind."},
+        {"role": "user", "content": "I'm on macOS for my laptop and Linux on the home server."},
+        {"role": "assistant", "content": "Got it."},
+        {"role": "user", "content": "I'm at Acme Corp. My title is data analyst, but I also help with BI dashboards."},
+        {"role": "assistant", "content": "Understood."},
+        {"role": "user", "content": "Food-wise: no shellfish, and I try to keep lunches light."},
+        {"role": "assistant", "content": "Thanks. Noted."},
+        {"role": "user", "content": "I usually hit the gym early, like 6am. Evening workouts tend to get bumped."},
+        {"role": "assistant", "content": "Morning workouts preferred. Noted."}
+      ]
+    },
+    {
+      "title": "Weekly Planning",
+      "messages": [
+        {"role": "user", "content": "This week is tight: Tuesday afternoon is blocked for the finance review. Thursday morning I'm in a dentist appointment."},
+        {"role": "assistant", "content": "Okay."},
+        {"role": "user", "content": "Friday is flexible after 2pm. If anything needs scheduling, that slot is the best."},
+        {"role": "assistant", "content": "I'll use Friday after 2pm as a preference."},
+        {"role": "user", "content": "Top work priority is the Q2 forecast deck. It's due next Wednesday."},
+        {"role": "assistant", "content": "Understood."}
+      ]
+    },
+    {
+      "title": "Project Details",
+      "messages": [
+        {"role": "user", "content": "For the forecast deck, I need the new churn chart and the SMB growth slide. Use the updated template from last quarter."},
+        {"role": "assistant", "content": "Okay, churn chart and SMB growth, using the updated template."},
+        {"role": "user", "content": "Also, Nina from Finance is the approver. She wants a draft by Monday morning."},
+        {"role": "assistant", "content": "Noted."}
+      ]
+    },
+    {
+      "title": "Personal Updates",
+      "messages": [
+        {"role": "user", "content": "We adopted a dog last weekend. His name is Milo. He's a golden retriever."},
+        {"role": "assistant", "content": "Congrats! Milo sounds great."},
+        {"role": "user", "content": "Travel-wise, I'm headed to Chicago next month for a conference, probably mid-month."},
+        {"role": "assistant", "content": "Okay."},
+        {"role": "user", "content": "I prefer aisle seats when I fly, and I like flights after 9am."},
+        {"role": "assistant", "content": "Got it."}
+      ]
+    },
+    {
+      "title": "Tooling and Preferences Shift",
+      "messages": [
+        {"role": "user", "content": "I switched my note app from Notion to Obsidian. I still keep shared docs in Google Docs though."},
+        {"role": "assistant", "content": "Understood."},
+        {"role": "user", "content": "For quick reminders, I prefer text messages over email."},
+        {"role": "assistant", "content": "Noted."}
+      ]
+    },
+    {
+      "title": "Follow-up and Correction",
+      "messages": [
+        {"role": "user", "content": "Just to clarify, I still use Python for scripts, but my new backend work is in Go, not Rust anymore."},
+        {"role": "assistant", "content": "Thanks for the update."}
+      ]
+    }
+  ]
+}

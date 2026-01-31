@@ -1,0 +1,46 @@
+{
+  "assistant_name": "Nora",
+  "user_name": "Casey",
+  "sessions": [
+    {
+      "title": "Work History",
+      "messages": [
+        {"role": "user", "content": "I was at Google as a PM, but I moved teams last year."},
+        {"role": "assistant", "content": "Okay."},
+        {"role": "user", "content": "Now I'm at OpenAI on the policy team. New manager is Priya."},
+        {"role": "assistant", "content": "Got it."},
+        {"role": "user", "content": "Actually, Priya moved to another org. My manager is Leo now."},
+        {"role": "assistant", "content": "Thanks for the update."}
+      ]
+    },
+    {
+      "title": "Team and Relationships",
+      "messages": [
+        {"role": "user", "content": "My teammate Alex is on ML Infra. We pair on a weekly experiment review."},
+        {"role": "assistant", "content": "Okay."},
+        {"role": "user", "content": "Sam handles compliance on our side. Sam works closely with Riya in Legal."},
+        {"role": "assistant", "content": "Understood."},
+        {"role": "user", "content": "We collaborate with the Research org. The lead there is Dr. Chen."},
+        {"role": "assistant", "content": "Noted."}
+      ]
+    },
+    {
+      "title": "Projects and Dependencies",
+      "messages": [
+        {"role": "user", "content": "I'm leading the incident response playbook refresh. The dependency is a data retention policy from Legal."},
+        {"role": "assistant", "content": "Got it."},
+        {"role": "user", "content": "Legal says Riya owns that policy. I need a draft by the 15th."},
+        {"role": "assistant", "content": "Understood."}
+      ]
+    },
+    {
+      "title": "Org Update",
+      "messages": [
+        {"role": "user", "content": "We're planning a move to a new team called Trust & Safety. It should happen next quarter."},
+        {"role": "assistant", "content": "Thanks."},
+        {"role": "user", "content": "If that happens, Alex might stay in ML Infra, but I’ll move with policy."},
+        {"role": "assistant", "content": "Noted."}
+      ]
+    }
+  ]
+}
