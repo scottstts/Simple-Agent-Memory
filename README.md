@@ -211,34 +211,48 @@ state = await cp.load_latest()
 ### Maintenance (system-level)
 
 ```python
-from simple_agent_memory.llm_clients import create_openai_client
-
-llm = create_openai_client("gpt-5.2")
-
-async with Memory("user_123", llm=llm) as mem:
-    await mem.maintain("nightly")   # dedup, merge, update summaries
-    await mem.maintain("weekly")    # append persistent summaries, archive stale
-    await mem.maintain("monthly")   # reindex embeddings
-```
-
-## Using Separate LLMs For File/Graph Memories (Optional)
-
-If you want the memory system itself to run extraction/classification/summarization (e.g., run `memorize()` manually for selective AI agent conversations, **not agent-driven**), you can use the `Memory` facade. This is optional and mainly for quick prototypes or non-tool workflows.
-
-Note: this essentially is independent LLM chains running separate memory manipulations offline without a broad context you get when you let an agent use memory as tools, so expect certain level of memory quality degradation compared to `tool_mode=True`
-
-```python
-from simple_agent_memory import Memory
+from simple_agent_memory import Maintenance
 from simple_agent_memory.llm_clients import create_openai_client, create_openai_embedder
 
 llm = create_openai_client("gpt-5.2")
 embed = create_openai_embedder("text-embedding-3-small")
 
-async with Memory("user_123", llm=llm, embed=embed, mode="both") as mem:
-    await mem.memorize("I prefer Python for scripting. I work at Acme Corp.")
-    await mem.maintain("nightly")
-    context = await mem.retrieve("Write me a script", file_level="summaries")
-    print(context)
+async with Maintenance("user_123", llm=llm, embed=embed, db_path="./agent_memory.db") as maint:
+    await maint.run("nightly")   # dedup, merge, update summaries
+    await maint.run("weekly")    # append persistent summaries, archive stale
+    await maint.run("monthly")   # reindex embeddings
+```
+
+## Using File/Graph Memories Directly (Optional, Internal LLM Mode)
+
+If you want the memory system itself to run extraction/classification (e.g., run `memorize()` manually for selective AI agent conversations, **not agent-driven**), use `FileMemory` and `GraphMemory` directly. This is optional and mainly for quick prototypes or non-tool workflows.
+
+Note: this uses independent LLM chains running separate memory manipulations offline without the broader context your agent has, so expect some quality degradation compared to `tool_mode=True`.
+
+```python
+from simple_agent_memory import FileMemory, GraphMemory, Maintenance
+from simple_agent_memory.storage import SQLiteStore
+from simple_agent_memory.vector import NumpyVectorStore
+from simple_agent_memory.llm_clients import create_openai_client, create_openai_embedder
+
+llm = create_openai_client("gpt-5.2")
+embed = create_openai_embedder("text-embedding-3-small")
+
+store = SQLiteStore("./agent_memory.db")
+vector = NumpyVectorStore("./agent_memory_vectors.db")
+
+file_memory = FileMemory("user_123", storage=store, llm=llm, vector_store=vector, embed=embed)
+graph_memory = GraphMemory("user_123", storage=store, vector_store=vector, llm=llm, embed=embed)
+
+# Choose the appropriate memory per fact type.
+await file_memory.memorize("I prefer Python for scripting.")
+await graph_memory.memorize("I work at Acme Corp.")
+
+async with Maintenance("user_123", llm=llm, db_path="./agent_memory.db", embed=embed) as maint:
+    await maint.run("nightly")
+
+context = await file_memory.retrieve("Write me a script", level="summaries")
+print(context)
 ```
 
 ## Architecture
@@ -254,7 +268,7 @@ Simple Agent Memory exposes two long‑term memory systems (file memory and grap
   - Each `item` is saved as a **memory item** (content + category + source link).  
   - If an embedder + vector store are configured, each item is embedded and indexed with metadata for semantic retrieval.
   - **Summaries are produced by maintenance**: a general per‑category summary (nightly) and a persistent per‑category summary (weekly).
-- **Retrieval**: returns general + persistent summaries (clearly labeled), items, and/or raw resources based on the requested `level`. `search_query` can override the keyword used for item/resource lookups. Optional semantic items can be included via `vector_only` or `*_then_vector`. No internal LLM decisions are made.
+- **Retrieval**: returns general + persistent summaries (clearly labeled), items, and/or raw resources based on the requested `level`. `search_query` can override the keyword used for item/resource lookups. Optional semantic context can be included via `semantic` or `*_then_semantic` (aliases: `vector_only`, `*_then_vector`). No internal LLM decisions are made.
 
 **Graph memory (relational facts)**
 - **Inputs**: raw `text` plus agent‑provided triplets `{subject, predicate, object, status}`.
@@ -262,7 +276,7 @@ Simple Agent Memory exposes two long‑term memory systems (file memory and grap
   - Every `text` is saved as a **resource**.  
   - Each triplet is saved to the **knowledge graph** with status (`current|past|uncertain`).  
   - The full `text` is embedded and indexed in the vector store (graph memory requires an embedder).
-- **Retrieval**: graph lookup is driven by explicit `entities` (tool mode), with optional vector fallback/augmentation depending on `level` (`graph_only`, `graph_then_vector`, `vector_only`).
+- **Retrieval**: graph lookup is driven by explicit `entities` (tool mode), with optional vector fallback/augmentation depending on `level` (`graph_only`, `graph_then_vector`, `vector_only`). You can also control connected-node expansion with `expand` (`none`, `low`, `medium`, `high`, `full`; default `medium`).
 
 ### Internal LLM Mode (optional, memory‑driven)
 
@@ -272,7 +286,7 @@ Simple Agent Memory exposes two long‑term memory systems (file memory and grap
 
 **Graph memory**
 - **Inputs**: only raw `text`. The memory system extracts triplets, detects conflicts for current facts, and deactivates prior conflicting predicates.
-- **Retrieval**: the LLM extracts entities and may filter predicates; vector search can still be blended by `level`.
+- **Retrieval**: the LLM extracts entities and may filter predicates; vector search can still be blended by `level`. Connected-node expansion is controlled by `expand` (`none`…`full`, default `medium`).
 
 ### Maintenance (system‑level, independent of mode)
 
@@ -283,7 +297,7 @@ Maintenance operates on **file memory items** to keep the store compact and high
 
 ### Both
 
-When using the `Memory` facade in `mode="both"`, file and graph memories are written in parallel. Retrieval can blend file summaries/items/resources with graph and/or vector results based on the chosen levels.
+If you want both memory types, call `FileMemory` and `GraphMemory` explicitly. This makes it clear which facts go into which memory and avoids accidental dual‑writes. Retrieval can still blend file summaries/items/resources with graph results by calling each retriever and composing the outputs at the agent layer.
 
 ## LLM Clients
 

@@ -3,43 +3,31 @@
   "user_name": "Casey",
   "sessions": [
     {
-      "title": "Work History",
+      "title": "Getting Started",
       "messages": [
-        {"role": "user", "content": "I was at Google as a PM, but I moved teams last year."},
-        {"role": "assistant", "content": "Okay."},
-        {"role": "user", "content": "Now I'm at OpenAI on the policy team. New manager is Priya."},
-        {"role": "assistant", "content": "Got it."},
-        {"role": "user", "content": "Actually, Priya moved to another org. My manager is Leo now."},
-        {"role": "assistant", "content": "Thanks for the update."}
+        {"role": "user", "content": "Hey Nora, I'm Casey. I'm a product manager at Datadog. I joined about a year ago from Figma where I was also a PM."},
+        {"role": "assistant", "content": "Hi Casey. Datadog and Figma — both solid companies. What area do you work on at Datadog?"},
+        {"role": "user", "content": "I'm on the APM team. My manager is Victor, he's a senior PM director. He reports directly to the VP of Product, Lina."},
+        {"role": "assistant", "content": "Got it. Victor as your manager, Lina above him."},
+        {"role": "user", "content": "Victor's been really supportive. He hired me specifically to own the distributed tracing product line. Before me it was split across two PMs who both left."},
+        {"role": "assistant", "content": "So you consolidated the ownership. That's a lot of scope to take on at once."},
+        {"role": "user", "content": "Yeah. The engineering lead for my area is Tomás. He manages a team of about 12 engineers. We work closely together on roadmap."},
+        {"role": "assistant", "content": "You and Tomás driving roadmap together — that's the core partnership then."}
       ]
     },
     {
-      "title": "Team and Relationships",
+      "title": "Team Dynamics",
       "messages": [
-        {"role": "user", "content": "My teammate Alex is on ML Infra. We pair on a weekly experiment review."},
-        {"role": "assistant", "content": "Okay."},
-        {"role": "user", "content": "Sam handles compliance on our side. Sam works closely with Riya in Legal."},
-        {"role": "assistant", "content": "Understood."},
-        {"role": "user", "content": "We collaborate with the Research org. The lead there is Dr. Chen."},
-        {"role": "assistant", "content": "Noted."}
-      ]
-    },
-    {
-      "title": "Projects and Dependencies",
-      "messages": [
-        {"role": "user", "content": "I'm leading the incident response playbook refresh. The dependency is a data retention policy from Legal."},
-        {"role": "assistant", "content": "Got it."},
-        {"role": "user", "content": "Legal says Riya owns that policy. I need a draft by the 15th."},
-        {"role": "assistant", "content": "Understood."}
-      ]
-    },
-    {
-      "title": "Org Update",
-      "messages": [
-        {"role": "user", "content": "We're planning a move to a new team called Trust & Safety. It should happen next quarter."},
-        {"role": "assistant", "content": "Thanks."},
-        {"role": "user", "content": "If that happens, Alex might stay in ML Infra, but I’ll move with policy."},
-        {"role": "assistant", "content": "Noted."}
+        {"role": "user", "content": "Let me tell you about the team structure. Under Tomás there are two tech leads: Rina handles the backend ingestion pipeline and Marcus handles the query engine and UI."},
+        {"role": "assistant", "content": "So Rina on ingestion, Marcus on query and frontend. Both report to Tomás."},
+        {"role": "user", "content": "Right. Rina is incredible — super reliable, ships fast. Marcus is brilliant but can be hard to work with. He tends to push back hard on product requirements."},
+        {"role": "assistant", "content": "That dynamic comes up a lot. The pushback can actually be valuable if you can channel it."},
+        {"role": "user", "content": "True. I've learned to bring Marcus in early on decisions. If he feels included in the process he's much more collaborative. If I drop requirements on him he gets defensive."},
+        {"role": "assistant", "content": "Early involvement makes a big difference with people like that."},
+        {"role": "user", "content": "We also work with the design team. Our designer is Ava. She's amazing but she's shared across three teams so her time is limited. She reports to the head of design, Kwame."},
+        {"role": "assistant", "content": "That's a common pain point — shared designers stretched thin."},
+        {"role": "user", "content": "Yeah, I've been trying to get Kwame to allocate Ava to us full time. He says maybe next quarter if our project gets priority from Lina."},
+        {"role": "assistant", "content": "So it chains up: you need Lina to prioritize your project, which gives Kwame the justification to dedicate Ava."}
       ]
     }
   ]

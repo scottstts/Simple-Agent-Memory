@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -87,6 +88,15 @@ def _row_to_item(row: aiosqlite.Row) -> MemoryItem:
     )
 
 
+def _keyword_terms(query: str) -> list[str]:
+    cleaned = re.sub(r"[^\w:\-\.]+", " ", query or "")
+    terms = [t for t in cleaned.split() if len(t) >= 2]
+    if not terms:
+        fallback = (query or "").strip()
+        return [fallback] if fallback else []
+    return terms[:8]
+
+
 def _row_to_triplet(row: aiosqlite.Row) -> Triplet:
     return Triplet(
         subject=row["subject"],
@@ -141,11 +151,14 @@ class SQLiteStore:
         return row["content"] if row else None
 
     async def search_resources(self, user_id: str, query: str) -> list[str]:
+        terms = _keyword_terms(query)
+        if not terms:
+            return []
         db = await self._conn()
-        cur = await db.execute(
-            "SELECT content FROM resources WHERE user_id = ? AND content LIKE ? ORDER BY created_at DESC LIMIT 20",
-            (user_id, f"%{query}%"),
-        )
+        clauses = " OR ".join("content LIKE ?" for _ in terms)
+        params = [user_id] + [f"%{t}%" for t in terms]
+        sql = f"SELECT content FROM resources WHERE user_id = ? AND ({clauses}) ORDER BY created_at DESC LIMIT 20"
+        cur = await db.execute(sql, params)
         return [row["content"] async for row in cur]
 
     # ── Items ──
@@ -186,11 +199,17 @@ class SQLiteStore:
         return _row_to_item(row) if row else None
 
     async def search_items(self, user_id: str, query: str) -> list[MemoryItem]:
+        terms = _keyword_terms(query)
+        if not terms:
+            return []
         db = await self._conn()
-        cur = await db.execute(
-            "SELECT * FROM items WHERE user_id = ? AND archived = 0 AND content LIKE ? ORDER BY created_at DESC LIMIT 50",
-            (user_id, f"%{query}%"),
+        clauses = " OR ".join("content LIKE ?" for _ in terms)
+        params = [user_id] + [f"%{t}%" for t in terms]
+        sql = (
+            "SELECT * FROM items WHERE user_id = ? AND archived = 0 "
+            f"AND ({clauses}) ORDER BY created_at DESC LIMIT 50"
         )
+        cur = await db.execute(sql, params)
         return [_row_to_item(row) async for row in cur]
 
     async def update_item(self, item: MemoryItem) -> None:

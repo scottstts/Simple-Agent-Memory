@@ -1,67 +1,33 @@
 {
-  "assistant_name": "Avery",
-  "user_name": "Jordan",
+  "assistant_name": "Kai",
+  "user_name": "Morgan",
   "sessions": [
     {
-      "title": "Onboarding and Preferences",
+      "title": "First Setup",
       "messages": [
-        {"role": "user", "content": "Hey Avery, quick intro: I'm Jordan. I mostly script in Python. For systems work I dabble in Rust."},
-        {"role": "assistant", "content": "Great to meet you, Jordan. I'll keep that in mind."},
-        {"role": "user", "content": "I'm on macOS for my laptop and Linux on the home server."},
-        {"role": "assistant", "content": "Got it."},
-        {"role": "user", "content": "I'm at Acme Corp. My title is data analyst, but I also help with BI dashboards."},
-        {"role": "assistant", "content": "Understood."},
-        {"role": "user", "content": "Food-wise: no shellfish, and I try to keep lunches light."},
-        {"role": "assistant", "content": "Thanks. Noted."},
-        {"role": "user", "content": "I usually hit the gym early, like 6am. Evening workouts tend to get bumped."},
-        {"role": "assistant", "content": "Morning workouts preferred. Noted."}
+        {"role": "user", "content": "Hi Kai, I'm Morgan. Just got you set up on my machine. I'm a senior backend engineer at Stripe, been there about two years now."},
+        {"role": "assistant", "content": "Hey Morgan, nice to meet you. Happy to help however I can. Stripe — that's a great place to be. What kind of work do you focus on there?"},
+        {"role": "user", "content": "I'm on the payments infrastructure team. Mostly working in Go, some Python for tooling and data pipelines. We run everything on AWS."},
+        {"role": "assistant", "content": "Got it — Go for the core infra, Python for tooling, AWS underneath. Makes sense for payments scale."},
+        {"role": "user", "content": "Yeah exactly. Oh and I use Neovim as my main editor, tmux for everything. I know it's old school but I can't go back."},
+        {"role": "assistant", "content": "Nothing wrong with that — plenty of people swear by that setup for good reason."},
+        {"role": "user", "content": "I'm on an M2 MacBook Pro for work and I have an Arch Linux desktop at home that I use for personal projects and gaming."},
+        {"role": "assistant", "content": "Nice combo. I'll keep both environments in mind when suggesting anything."}
       ]
     },
     {
-      "title": "Weekly Planning",
+      "title": "Morning Routine Chat",
       "messages": [
-        {"role": "user", "content": "This week is tight: Tuesday afternoon is blocked for the finance review. Thursday morning I'm in a dentist appointment."},
-        {"role": "assistant", "content": "Okay."},
-        {"role": "user", "content": "Friday is flexible after 2pm. If anything needs scheduling, that slot is the best."},
-        {"role": "assistant", "content": "I'll use Friday after 2pm as a preference."},
-        {"role": "user", "content": "Top work priority is the Q2 forecast deck. It's due next Wednesday."},
-        {"role": "assistant", "content": "Understood."}
-      ]
-    },
-    {
-      "title": "Project Details",
-      "messages": [
-        {"role": "user", "content": "For the forecast deck, I need the new churn chart and the SMB growth slide. Use the updated template from last quarter."},
-        {"role": "assistant", "content": "Okay, churn chart and SMB growth, using the updated template."},
-        {"role": "user", "content": "Also, Nina from Finance is the approver. She wants a draft by Monday morning."},
-        {"role": "assistant", "content": "Noted."}
-      ]
-    },
-    {
-      "title": "Personal Updates",
-      "messages": [
-        {"role": "user", "content": "We adopted a dog last weekend. His name is Milo. He's a golden retriever."},
-        {"role": "assistant", "content": "Congrats! Milo sounds great."},
-        {"role": "user", "content": "Travel-wise, I'm headed to Chicago next month for a conference, probably mid-month."},
-        {"role": "assistant", "content": "Okay."},
-        {"role": "user", "content": "I prefer aisle seats when I fly, and I like flights after 9am."},
-        {"role": "assistant", "content": "Got it."}
-      ]
-    },
-    {
-      "title": "Tooling and Preferences Shift",
-      "messages": [
-        {"role": "user", "content": "I switched my note app from Notion to Obsidian. I still keep shared docs in Google Docs though."},
-        {"role": "assistant", "content": "Understood."},
-        {"role": "user", "content": "For quick reminders, I prefer text messages over email."},
-        {"role": "assistant", "content": "Noted."}
-      ]
-    },
-    {
-      "title": "Follow-up and Correction",
-      "messages": [
-        {"role": "user", "content": "Just to clarify, I still use Python for scripts, but my new backend work is in Go, not Rust anymore."},
-        {"role": "assistant", "content": "Thanks for the update."}
+        {"role": "user", "content": "Hey, random question. I'm trying to get better about mornings. Right now I wake up around 7:30 and just immediately check Slack, which I hate."},
+        {"role": "assistant", "content": "Yeah that's a common trap. What would an ideal morning look like for you?"},
+        {"role": "user", "content": "I'd love to run first thing. I used to run 5Ks pretty regularly, haven't in months. And then maybe read for 20 minutes before work."},
+        {"role": "assistant", "content": "That's doable. Would you want me to help you build a schedule around that? Like a 6:15 alarm, run by 6:30, back and showered by 7:15, reading until 7:45?"},
+        {"role": "user", "content": "That sounds great actually. My partner Jamie gets up at 6 anyway so I wouldn't be waking anyone."},
+        {"role": "assistant", "content": "Perfect. I'll note that down. Do you run outdoors or treadmill?"},
+        {"role": "user", "content": "Outdoors when the weather's okay. We live in Portland so rain is frequent, but I don't mind running in light rain. If it's really pouring I'll do a bodyweight workout at home instead."},
+        {"role": "assistant", "content": "Makes sense. Portland rain is more drizzle than storm most of the time anyway."},
+        {"role": "user", "content": "Exactly. Oh and I should mention, I have a slight knee issue on my left side. My PT said I should avoid steep downhill running and do quad strengthening exercises twice a week."},
+        {"role": "assistant", "content": "Good to know. I'll keep that in mind if I ever suggest routes or workouts."}
       ]
     }
   ]

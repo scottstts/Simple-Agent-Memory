@@ -119,23 +119,9 @@ def _collect_runs() -> list[dict]:
 def _mock_context() -> dict:
     personal = json.loads(_read_text(DATA_ROOT / "personal_assistant_conversations.json"))
     graph = json.loads(_read_text(DATA_ROOT / "relationship_graph_conversations.json"))
-    tool_mode = {
-        "file_tool_mode": {
-            "items": [
-                {"content": "User prefers Python for scripting", "category": "preferences"},
-                {"content": "User works at Acme Corp", "category": "work"},
-            ],
-        },
-        "graph_tool_mode": {
-            "triplets": [
-                {"subject": "User", "predicate": "works_at", "object": "Acme Corp"}
-            ]
-        },
-    }
     return {
         "personal_assistant": personal,
         "relationship_graph": graph,
-        "tool_mode_inputs": tool_mode,
     }
 
 
@@ -153,13 +139,14 @@ async def test_live_judge_report(openai_judge, live_log_dir):
         "Important context about the system:\n"
         "- File-mode stores items; summaries are produced by maintenance and may include general + persistent views.\n"
         "- Vector retrieval may return raw conversation text (resources). This is expected and not hallucination.\n"
-        "- Tool-mode uses pre-structured inputs; retrieval is query-driven and may NOT return all stored facts.\n"
+        "- Tool-mode uses pre-structured inputs (included in each run meta when available); retrieval is query-driven.\n"
         "- Graph-mode stores triplets and may also return vector hits; prioritize whether core relations are captured.\n\n"
-        "Each run may include metadata (\"meta\") with the query used. Use that query intent when judging retrieval relevance.\n\n"
+        "Each run may include metadata (\"meta\") with the query used. Use that query intent when judging retrieval relevance.\n"
+        "Some runs may be maintenance-only and have no retrieval outputs; judge them on storage/maintenance behavior.\n\n"
         "Scoring guidelines:\n"
         "- Focus on whether key facts from the mock data appear in stored summaries/items and retrieval outputs.\n"
         "- Penalize missing core facts, contradictions not resolved, or irrelevant retrievals.\n"
-        "- For tool-mode, judge outputs against provided structured inputs and the query intent.\n"
+        "- For tool-mode, judge outputs against structured inputs found in run meta (if present) and the query intent.\n"
         "- For graph-mode, check that major relations exist as triplets and that conflicts are handled sensibly.\n"
         "- Retrieval may be partial; do not penalize omission of unrelated facts.\n"
         "- Rate each run and an overall verdict.\n\n"

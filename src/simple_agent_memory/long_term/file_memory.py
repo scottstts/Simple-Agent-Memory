@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import inspect
+from datetime import datetime, timezone
 
-from ..llm import parse_bool_response, parse_json_response
-from ..prompts import CLASSIFY_ITEMS, EXTRACT_ITEMS, SELECT_CATEGORIES, SUFFICIENCY_CHECK
+from ..llm import invoke, parse_bool_response, parse_json_response
+from ..prompts import CLASSIFY_ITEMS, EXTRACT_ITEMS, GENERATE_QUERY, SELECT_CATEGORIES, SUFFICIENCY_CHECK
 from ..storage.base import Storage
-from ..types import EmbedCallable, LLMCallable, MemoryItem, _id, _now
+from ..types import EmbedCallable, LLMCallable, MemoryItem, RetrievalResult, _id, _now
 from ..vector.base import VectorStore
 from ..tool_instructions import FILE_MEMORY_TOOL_INSTRUCTIONS
 
 
 class FileMemory:
     tool_use_instruction = FILE_MEMORY_TOOL_INSTRUCTIONS
+    _RELEVANCE_THRESHOLD = 0.7
+    _DECAY_HALF_LIFE_DAYS = 30.0
+    _ACCESS_WEIGHT = 0.7
 
     def __init__(
         self,
@@ -87,17 +91,35 @@ class FileMemory:
         categories: list[str] | None = None,
         search_query: str | None = None,
     ) -> str:
-        vector_only = level == "vector_only"
-        vector_after = level.endswith("_then_vector")
-        base_level = level[:-len("_then_vector")] if vector_after else level
+        level = self._normalize_level(level)
+        semantic_only = level == "semantic"
+        semantic_after = level.endswith("_then_semantic")
+        base_level = level[:-len("_then_semantic")] if semantic_after else level
 
         if self._tool_mode and base_level == "auto":
             base_level = "summaries"
 
-        effective_query = search_query or query
-        if vector_only:
-            return await self._format_vector_results(effective_query)
+        if semantic_only:
+            return await self._semantic_context(
+                query,
+                search_query=search_query,
+                use_llm_query=not self._tool_mode,
+            )
 
+        semantic_context = ""
+        if semantic_after:
+            semantic_context = await self._semantic_context(
+                query,
+                search_query=search_query,
+                use_llm_query=not self._tool_mode,
+            )
+
+        def append_semantic(result: str) -> str:
+            if semantic_context:
+                return result + ("\n\n" if result else "") + semantic_context
+            return result
+
+        effective_query = search_query or query
         if self._tool_mode:
             if base_level == "items" or base_level == "resources":
                 items = await self._storage.search_items(self.user_id, effective_query)
@@ -115,11 +137,7 @@ class FileMemory:
                     if resources:
                         result = (result + "\n\n") if result else ""
                         result += "## Raw Context\n" + "\n---\n".join(resources[:3])
-                if vector_after:
-                    vector_section = await self._format_vector_results(effective_query)
-                    if vector_section:
-                        return result + ("\n\n" if result else "") + vector_section
-                return result
+                return append_semantic(result)
 
             # summaries only
             cats = categories or await self._storage.list_categories(self.user_id)
@@ -133,11 +151,7 @@ class FileMemory:
                 if p:
                     persistent[cat] = p
             result = self._format_summaries(general, persistent) if general or persistent else ""
-            if vector_after:
-                vector_section = await self._format_vector_results(effective_query)
-                if vector_section:
-                    return result + ("\n\n" if result else "") + vector_section
-            return result
+            return append_semantic(result)
 
         all_categories = await self._storage.list_categories(self.user_id)
         relevant = categories or (await self._select_categories(query, all_categories) if all_categories else [])
@@ -155,11 +169,7 @@ class FileMemory:
 
         if base_level == "summaries":
             result = self._format_summaries(general, persistent)
-            if vector_after:
-                vector_section = await self._format_vector_results(effective_query)
-                if vector_section:
-                    return result + ("\n\n" if result else "") + vector_section
-            return result
+            return append_semantic(result)
 
         if base_level == "items":
             items = await self._storage.search_items(self.user_id, effective_query)
@@ -170,17 +180,9 @@ class FileMemory:
                     item.accessed_at = _now()
                     await self._storage.update_item(item)
                 result = self._format_summaries(general, persistent) + f"\n\n## Detailed Items\n{item_text}"
-                if vector_after:
-                    vector_section = await self._format_vector_results(effective_query)
-                    if vector_section:
-                        return result + "\n\n" + vector_section
-                return result
+                return append_semantic(result)
             result = self._format_summaries(general, persistent)
-            if vector_after:
-                vector_section = await self._format_vector_results(effective_query)
-                if vector_section:
-                    return result + ("\n\n" if result else "") + vector_section
-            return result
+            return append_semantic(result)
 
         if base_level == "resources":
             items = await self._storage.search_items(self.user_id, effective_query)
@@ -201,26 +203,14 @@ class FileMemory:
                     + "\n\n## Raw Context\n"
                     + "\n---\n".join(resources[:3])
                 )
-                if vector_after:
-                    vector_section = await self._format_vector_results(effective_query)
-                    if vector_section:
-                        return result + "\n\n" + vector_section
-                return result
+                return append_semantic(result)
             result = self._format_summaries(general, persistent) + item_section
-            if vector_after:
-                vector_section = await self._format_vector_results(effective_query)
-                if vector_section:
-                    return result + ("\n\n" if result else "") + vector_section
-            return result
+            return append_semantic(result)
 
         if general or persistent:
             if await self._is_sufficient(query, general, persistent):
                 result = self._format_summaries(general, persistent)
-                if vector_after:
-                    vector_section = await self._format_vector_results(effective_query)
-                    if vector_section:
-                        return result + ("\n\n" if result else "") + vector_section
-                return result
+                return append_semantic(result)
 
         items = await self._storage.search_items(self.user_id, effective_query)
         if items:
@@ -230,11 +220,7 @@ class FileMemory:
                 item.accessed_at = _now()
                 await self._storage.update_item(item)
             result = self._format_summaries(general, persistent) + f"\n\n## Detailed Items\n{item_text}"
-            if vector_after:
-                vector_section = await self._format_vector_results(effective_query)
-                if vector_section:
-                    return result + "\n\n" + vector_section
-            return result
+            return append_semantic(result)
 
         resources = await self._storage.search_resources(self.user_id, effective_query)
         if resources:
@@ -243,18 +229,10 @@ class FileMemory:
                 + "\n\n## Raw Context\n"
                 + "\n---\n".join(resources[:3])
             )
-            if vector_after:
-                vector_section = await self._format_vector_results(effective_query)
-                if vector_section:
-                    return result + "\n\n" + vector_section
-            return result
+            return append_semantic(result)
 
         result = self._format_summaries(general, persistent)
-        if vector_after:
-            vector_section = await self._format_vector_results(effective_query)
-            if vector_section:
-                return result + ("\n\n" if result else "") + vector_section
-        return result
+        return append_semantic(result)
 
     async def _extract_items(self, text: str) -> list[dict]:
         return await parse_json_response(self._llm, EXTRACT_ITEMS.format(text=text))
@@ -309,39 +287,141 @@ class FileMemory:
                 parts.append(f"## {cat}\n" + "\n\n".join(section_parts))
         return "\n\n".join(parts)
 
-    async def _format_vector_results(self, query: str) -> str:
-        results = await self._vector_search(query)
-        if not results:
-            return ""
-        lines = ["## Semantic Items"]
-        updated: set[str] = set()
-        for text, score, item_id, category in results:
-            cat_label = f" [{category}]" if category else ""
-            lines.append(f"- {text}{cat_label} (score: {score:.2f})")
-            if item_id and item_id not in updated:
-                item = await self._storage.get_item_by_id(item_id)
-                if item:
-                    item.access_count += 1
-                    item.accessed_at = _now()
-                    await self._storage.update_item(item)
-                    updated.add(item_id)
-        return "\n".join(lines)
+    @staticmethod
+    def _normalize_level(level: str) -> str:
+        if level == "vector_only":
+            return "semantic"
+        if level.endswith("_then_vector"):
+            return level.replace("_then_vector", "_then_semantic")
+        return level
 
-    async def _vector_search(self, query: str) -> list[tuple[str, float, str | None, str | None]]:
-        if not self._vector or not self._embed:
-            return []
-        result = self._embed(query)
-        embedding = await result if inspect.isawaitable(result) else result
-        results = await self._vector.search(
-            embedding, top_k=20, filter={"user_id": self.user_id, "type": "item"}
-        )
-        output: list[tuple[str, float, str | None, str | None]] = []
-        for rid, score, meta in results:
-            text = meta.get("text", rid)
-            item_id = rid if meta.get("type") == "item" else None
-            category = meta.get("category")
-            output.append((text, score, item_id, category))
-        return output
+    async def _semantic_context(
+        self,
+        user_message: str,
+        *,
+        search_query: str | None,
+        use_llm_query: bool,
+        max_tokens: int = 2000,
+    ) -> str:
+        if search_query is None:
+            if use_llm_query:
+                search_query = await invoke(self._llm, GENERATE_QUERY.format(message=user_message))
+            else:
+                search_query = user_message
+
+        candidates = await self._semantic_candidates(search_query)
+        if not candidates:
+            return ""
+
+        item_map: dict[str, MemoryItem] = {
+            item.id: item for _, item in candidates if item is not None
+        }
+
+        scored: list[tuple[float, RetrievalResult]] = []
+        for result, _ in candidates:
+            if result.score < self._RELEVANCE_THRESHOLD:
+                continue
+            scored.append((self._apply_decay(result), result))
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        selected: list[RetrievalResult] = []
+        token_count = 0
+        for score, mem in scored:
+            tokens = len(mem.text) // 4
+            if token_count + tokens > max_tokens:
+                break
+            mem.score = score
+            selected.append(mem)
+            token_count += tokens
+
+        updated: set[str] = set()
+        for mem in selected:
+            if not mem.item_id or mem.item_id in updated:
+                continue
+            item = item_map.get(mem.item_id)
+            if item is None:
+                item = await self._storage.get_item_by_id(mem.item_id)
+            if item:
+                item.access_count += 1
+                item.accessed_at = _now()
+                await self._storage.update_item(item)
+                updated.add(mem.item_id)
+
+        return self._format_context(selected)
+
+    async def _semantic_candidates(
+        self, query: str
+    ) -> list[tuple[RetrievalResult, MemoryItem | None]]:
+        results: list[tuple[RetrievalResult, MemoryItem | None]] = []
+
+        items = await self._storage.search_items(self.user_id, query)
+        for item in items:
+            results.append((
+                RetrievalResult(
+                    text=item.content,
+                    score=0.8,
+                    timestamp=item.created_at,
+                    source="file",
+                    item_id=item.id,
+                    created_at=item.created_at,
+                    accessed_at=item.accessed_at,
+                ),
+                item,
+            ))
+
+        if self._vector and self._embed:
+            emb_result = self._embed(query)
+            embedding = await emb_result if inspect.isawaitable(emb_result) else emb_result
+            vec_results = await self._vector.search(
+                embedding, top_k=20, filter={"user_id": self.user_id, "type": "item"}
+            )
+            for rid, score, meta in vec_results:
+                created_at = self._parse_ts(meta.get("created_at")) if meta.get("created_at") else None
+                accessed_at = self._parse_ts(meta.get("accessed_at")) if meta.get("accessed_at") else None
+                results.append((
+                    RetrievalResult(
+                        text=meta.get("text", rid),
+                        score=score,
+                        timestamp=created_at or _now(),
+                        source="vector",
+                        item_id=rid if meta.get("type") == "item" else None,
+                        created_at=created_at,
+                        accessed_at=accessed_at,
+                    ),
+                    None,
+                ))
+
+        return results
+
+    def _apply_decay(self, result: RetrievalResult) -> float:
+        now = _now()
+        created = result.created_at or result.timestamp
+        accessed = result.accessed_at or result.timestamp
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if accessed.tzinfo is None:
+            accessed = accessed.replace(tzinfo=timezone.utc)
+        if accessed < created:
+            accessed = created
+        blended = created + (accessed - created) * self._ACCESS_WEIGHT
+        age_days = (now - blended).total_seconds() / 86400
+        return result.score / (1.0 + age_days / self._DECAY_HALF_LIFE_DAYS)
+
+    @staticmethod
+    def _parse_ts(value: str) -> datetime:
+        dt = datetime.fromisoformat(value)
+        return dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _format_context(memories: list[RetrievalResult]) -> str:
+        if not memories:
+            return ""
+        lines = ["=== RELEVANT MEMORIES ===\n"]
+        for m in memories:
+            lines.append(f"[{m.timestamp.isoformat()}] (confidence: {m.score:.2f})")
+            lines.append(f"{m.text}\n")
+        lines.append("=== END MEMORIES ===")
+        return "\n".join(lines)
 
     @staticmethod
     def _clean_summary(category: str, text: str) -> str:

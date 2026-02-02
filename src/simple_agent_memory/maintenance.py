@@ -2,14 +2,27 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from pathlib import Path
 
 import numpy as np
 
 from .llm import invoke
 from .prompts import COMPRESS_MEMORIES, EVOLVE_SUMMARY
 from .storage.base import Storage
+from .storage.sqlite_store import DEFAULT_DB_DIR, SQLiteStore
 from .types import EmbedCallable, LLMCallable, _now
 from .vector.base import VectorStore
+from .vector.numpy_store import NumpyVectorStore
+
+
+def _vector_db_path(db_path: str | Path | None) -> str:
+    if db_path is None:
+        DEFAULT_DB_DIR.mkdir(parents=True, exist_ok=True)
+        return str(DEFAULT_DB_DIR / "vectors.db")
+    path = Path(db_path)
+    suffix = path.suffix or ".db"
+    stem = path.with_suffix("").name
+    return str(path.with_name(f"{stem}_vectors{suffix}"))
 
 
 class MaintenanceRunner:
@@ -195,3 +208,45 @@ class MaintenanceRunner:
         w = await self.weekly(user_id)
         m = await self.monthly(user_id)
         return {"nightly": n, "weekly": w, "monthly": m}
+
+
+class Maintenance:
+    def __init__(
+        self,
+        user_id: str,
+        llm: LLMCallable,
+        *,
+        db_path: str | Path | None = None,
+        vector_db_path: str | Path | None = None,
+        storage: Storage | None = None,
+        vector_store: VectorStore | None = None,
+        embed: EmbedCallable | None = None,
+    ):
+        self.user_id = user_id
+        self._storage = storage or SQLiteStore(db_path)
+        self._owns_storage = storage is None
+        created_vector = False
+        if vector_store is None and embed is not None:
+            vector_store = NumpyVectorStore(str(vector_db_path or _vector_db_path(db_path)))
+            created_vector = True
+        self._vector = vector_store
+        self._owns_vector = created_vector
+        self._runner = MaintenanceRunner(self._storage, llm, self._vector, embed)
+
+    async def run(self, schedule: str = "all") -> dict:
+        if schedule == "all":
+            return await self._runner.run_all(self.user_id)
+        runner = getattr(self._runner, schedule)
+        return await runner(self.user_id)
+
+    async def close(self) -> None:
+        if self._owns_storage:
+            await self._storage.close()
+        if self._owns_vector and self._vector:
+            await self._vector.close()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        await self.close()

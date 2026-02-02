@@ -16,7 +16,8 @@ Tools:
    When to use: answer questions about preferences, schedules, personal info.
    Inputs:
    - query: user question
-   - level: "summaries" | "items" | "resources" | "auto" | "vector_only" | "summaries_then_vector" | "items_then_vector" | "resources_then_vector"
+   - level: "summaries" | "items" | "resources" | "auto" | "semantic" | "summaries_then_semantic" | "items_then_semantic" | "resources_then_semantic"
+     (aliases: "vector_only" => "semantic", "*_then_vector" => "*_then_semantic")
    - categories: list of categories to load (optional)
    - search_query: keyword query (optional)
    Output:
@@ -24,8 +25,11 @@ Tools:
 
 Guidance:
 - Keep items atomic and explicit.
-- Prefer these categories when they fit: work, preferences, personal, health, schedule, travel, tech, relationships.
+- Prefer these categories when they fit: work, preferences, personal, health, schedule, behavior, goals, travel, tech, relationships.
+- For tool-mode retrieval, keep search_query short and keyword-like (2-8 terms). Avoid long sentences.
+- If a keyword retrieval returns empty or misses details, retry with semantic retrieval (level "semantic" or "*_then_semantic").
 - Summaries are produced by maintenance; retrieval returns both general and persistent summaries when available.
+- Semantic retrieval returns a ranked memory block with timestamps and confidence.
 """
 
 
@@ -53,6 +57,7 @@ Tools:
    - query: user question
    - entities: list of entity names (required in tool_mode)
    - level: "graph_only" | "graph_then_vector" | "vector_only"
+   - expand: "none" | "low" | "medium" | "high" | "full" (controls connected-node expansion)
    Output:
    - list of RetrievalResult objects (text includes status label)
 
@@ -62,4 +67,5 @@ Guidance:
 - Use \"past\" for historical facts rather than deleting them.
 - Graph retrieval annotates facts with status, e.g. \"(current)\" or \"(past)\".
 - Current facts are prioritized over past facts.
+- expand guidance: "none" = only direct subject triplets; "low" = include one hop with tight predicate filtering; "medium" = include one hop with expanded predicate filtering; "high" = one hop without predicate filtering; "full" = two hops without predicate filtering.
 """

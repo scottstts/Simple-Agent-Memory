@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 from datetime import datetime, timezone
 
 from ..llm import parse_bool_response, parse_json_response
@@ -39,7 +40,7 @@ class GraphMemory:
         if self._tool_mode:
             raw_triplets = triplets or []
         else:
-            raw_triplets = await self._extract_triplets(text)
+            raw_triplets = self._clean_triplets(await self._extract_triplets(text))
         saved: list[Triplet] = []
 
         for raw in raw_triplets:
@@ -75,12 +76,50 @@ class GraphMemory:
         )
         return saved
 
+    @staticmethod
+    def _normalize_predicate(predicate: str) -> str:
+        pred = predicate.strip().lower()
+        pred = re.sub(r"[\s\-\/]+", "_", pred)
+        pred = re.sub(r"[^a-z0-9_]+", "_", pred)
+        pred = re.sub(r"_+", "_", pred)
+        return pred.strip("_")
+
+    def _clean_triplets(self, raw_triplets: list[dict]) -> list[dict]:
+        cleaned: list[dict] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        for raw in raw_triplets:
+            subject = str(raw.get("subject", "")).strip()
+            predicate = str(raw.get("predicate", "")).strip()
+            obj = str(raw.get("object", "")).strip()
+            if not subject or not predicate or not obj:
+                continue
+            pred_norm = self._normalize_predicate(predicate)
+            if not pred_norm:
+                continue
+            status = str(raw.get("status", "current")).lower().strip()
+            if status not in {"current", "past", "uncertain"}:
+                status = "uncertain"
+            key = (subject.casefold(), pred_norm, obj.casefold(), status)
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(
+                {
+                    "subject": subject,
+                    "predicate": pred_norm,
+                    "object": obj,
+                    "status": status,
+                }
+            )
+        return cleaned
+
     async def retrieve(
         self,
         query: str,
         *,
         entities: list[str] | None = None,
         level: str = "graph_then_vector",
+        expand: str = "medium",
     ) -> list[RetrievalResult]:
         graph_results: list[RetrievalResult] = []
         vector_results: list[RetrievalResult] = []
@@ -88,11 +127,11 @@ class GraphMemory:
         if level in ("graph_only", "graph_then_vector"):
             if self._tool_mode:
                 if entities:
-                    graph_results = await self._graph_search_entities(entities)
+                    graph_results = await self._graph_search_entities(entities, expand=expand)
             else:
-                graph_results = await self._graph_search(query)
+                graph_results = await self._graph_search(query, expand=expand)
                 if not graph_results:
-                    graph_results = await self._graph_search_entities(["User"])
+                    graph_results = await self._graph_search_entities(["User"], expand=expand)
 
         if level in ("vector_only", "graph_then_vector"):
             vector_results = await self._vector_search(query)
@@ -137,19 +176,62 @@ class GraphMemory:
             for rid, score, meta in results
         ]
 
-    async def _graph_search(self, query: str) -> list[RetrievalResult]:
+    async def _graph_search(self, query: str, *, expand: str) -> list[RetrievalResult]:
         entities = await self._extract_entities(query)
-        return await self._graph_search_entities(entities, query=query)
+        return await self._graph_search_entities(entities, query=query, expand=expand)
 
-    async def _graph_search_entities(self, entities: list[str], query: str | None = None) -> list[RetrievalResult]:
+    async def _graph_search_entities(
+        self,
+        entities: list[str],
+        query: str | None = None,
+        *,
+        expand: str,
+    ) -> list[RetrievalResult]:
         results: list[RetrievalResult] = []
         predicate_filter: set[str] | None = None
 
-        if query:
-            all_triplets: list[Triplet] = []
-            for entity in entities:
-                all_triplets.extend(await self._storage.get_triplets(self.user_id, subject=entity))
-            predicates = sorted({t.predicate for t in all_triplets})
+        expand = (expand or "medium").lower()
+        if expand not in {"none", "low", "medium", "high", "full"}:
+            expand = "medium"
+
+        depth_map = {"none": 0, "low": 1, "medium": 1, "high": 1, "full": 2}
+        depth = depth_map[expand]
+        filter_mode = "none" if expand in {"high", "full"} else ("expanded" if expand == "medium" else "base")
+
+        base_by_entity: dict[str, list[Triplet]] = {}
+        connected_by_entity: dict[str, list[Triplet]] = {}
+        second_by_entity: dict[str, list[Triplet]] = {}
+
+        for entity in entities:
+            base_by_entity[entity] = await self._storage.get_triplets(self.user_id, subject=entity)
+
+        if depth >= 1:
+            for triplets in base_by_entity.values():
+                for t in triplets:
+                    if t.object in connected_by_entity:
+                        continue
+                    connected_by_entity[t.object] = await self._storage.get_triplets(
+                        self.user_id, subject=t.object
+                    )
+
+        if depth >= 2:
+            for triplets in connected_by_entity.values():
+                for t in triplets:
+                    if t.object in second_by_entity:
+                        continue
+                    second_by_entity[t.object] = await self._storage.get_triplets(
+                        self.user_id, subject=t.object
+                    )
+
+        if query and filter_mode != "none":
+            predicate_pool: set[str] = set()
+            for triplets in base_by_entity.values():
+                predicate_pool.update(t.predicate for t in triplets)
+            if filter_mode == "expanded":
+                for triplets in connected_by_entity.values():
+                    predicate_pool.update(t.predicate for t in triplets)
+
+            predicates = sorted(predicate_pool)
             if predicates:
                 pred_text = "\n".join(f"- {p}" for p in predicates)
                 try:
@@ -160,18 +242,36 @@ class GraphMemory:
                     predicate_filter = {p for p in keep if p in predicates}
                 except Exception:
                     predicate_filter = None
-        for entity in entities:
-            triplets = await self._storage.get_triplets(self.user_id, subject=entity)
+
+        seen: set[str] = set()
+        for triplets in base_by_entity.values():
             for t in triplets:
                 if predicate_filter and t.predicate not in predicate_filter:
                     continue
-                results.append(self._graph_result(t, 0.8))
+                result = self._graph_result(t, 0.8)
+                if result.text not in seen:
+                    results.append(result)
+                    seen.add(result.text)
 
-                connected = await self._storage.get_triplets(self.user_id, subject=t.object)
-                for ct in connected:
-                    if predicate_filter and ct.predicate not in predicate_filter:
+        if depth >= 1:
+            for triplets in connected_by_entity.values():
+                for t in triplets:
+                    if predicate_filter and t.predicate not in predicate_filter:
                         continue
-                    results.append(self._graph_result(ct, 0.6))
+                    result = self._graph_result(t, 0.6)
+                    if result.text not in seen:
+                        results.append(result)
+                        seen.add(result.text)
+
+        if depth >= 2:
+            for triplets in second_by_entity.values():
+                for t in triplets:
+                    if predicate_filter and t.predicate not in predicate_filter:
+                        continue
+                    result = self._graph_result(t, 0.5)
+                    if result.text not in seen:
+                        results.append(result)
+                        seen.add(result.text)
 
         return results
 

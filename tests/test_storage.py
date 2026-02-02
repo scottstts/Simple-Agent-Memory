@@ -28,6 +28,16 @@ async def test_item_search(storage):
 
 
 @pytest.mark.asyncio
+async def test_item_search_multi_term(storage):
+    await storage.save_item(MemoryItem(user_id="u2", content="Proposed morning plan: set a 6:15 alarm.", category="schedule"))
+    await storage.save_item(MemoryItem(user_id="u2", content="Morgan currently wakes up around 7:30.", category="schedule"))
+    results = await storage.search_items("u2", "morning routine 6:15 alarm run 7:30")
+    assert len(results) >= 1
+    contents = [r.content for r in results]
+    assert any("6:15" in c for c in contents)
+
+
+@pytest.mark.asyncio
 async def test_category_roundtrip(storage):
     await storage.save_category("u1", "work", "Works at Acme Corp")
     summary = await storage.load_category("u1", "work")

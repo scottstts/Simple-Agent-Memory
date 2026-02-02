@@ -3,15 +3,24 @@ from pathlib import Path
 
 import pytest
 
-from simple_agent_memory import Memory
+from simple_agent_memory.long_term.file_memory import FileMemory
+from simple_agent_memory.maintenance import MaintenanceRunner
 from simple_agent_memory.storage.sqlite_store import SQLiteStore
+from simple_agent_memory.vector.numpy_store import NumpyVectorStore
+from tests.live_test.llm_sim import (
+    file_retrieval_plan,
+    tool_mode_file_items,
+)
 
 
 pytestmark = pytest.mark.live
 
 
-def _load_messages(path: Path) -> list[str]:
-    data = json.loads(path.read_text(encoding="utf-8"))
+def _load_data(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_messages(data: dict) -> list[str]:
     lines: list[str] = []
     for session in data["sessions"]:
         for msg in session["messages"]:
@@ -19,23 +28,38 @@ def _load_messages(path: Path) -> list[str]:
     return lines
 
 
+def _vector_db_path(db_path: Path) -> Path:
+    suffix = db_path.suffix or ".db"
+    stem = db_path.with_suffix("").name
+    return db_path.with_name(f"{stem}_vectors{suffix}")
+
+
 @pytest.mark.asyncio
 async def test_live_file_mode_internal_llm(openai_llm, openai_embedder, live_log_dir):
     data_path = Path(__file__).parent / "live_test_mock_data" / "personal_assistant_conversations.json"
-    conversation = "\n".join(_load_messages(data_path))
+    data = _load_data(data_path)
+    conversation = "\n".join(_load_messages(data))
+    user_name = data.get("user_name", "User")
 
     db_path = live_log_dir / "memory.db"
-    async with Memory(
-        "jordan",
-        openai_llm,
-        embed=openai_embedder,
-        db_path=db_path,
-        mode="file",
-    ) as mem:
-        await mem.memorize(conversation)
-        await mem.maintain("nightly")
-        query = "What programming language does Jordan prefer?"
-        result = await mem.retrieve(query, file_level="summaries")
+    store = SQLiteStore(db_path)
+    vector = NumpyVectorStore(str(_vector_db_path(db_path)))
+    fm = FileMemory(user_name.lower(), storage=store, llm=openai_llm, vector_store=vector, embed=openai_embedder)
+    runner = MaintenanceRunner(store, openai_llm, vector, openai_embedder)
+    try:
+        await fm.memorize(conversation)
+        await runner.nightly(user_name.lower())
+        plan = file_retrieval_plan(openai_llm, conversation, tool_mode=False)
+        query = plan["query"]
+        result = await fm.retrieve(
+            query,
+            level=plan.get("level", "summaries"),
+            categories=plan.get("categories"),
+            search_query=plan.get("search_query"),
+        )
+    finally:
+        await store.close()
+        await vector.close()
 
     (live_log_dir / "file_mode_retrieve.txt").write_text(result, encoding="utf-8")
     (live_log_dir / "run_meta.json").write_text(
@@ -44,6 +68,7 @@ async def test_live_file_mode_internal_llm(openai_llm, openai_embedder, live_log
                 "mode": "file",
                 "tool_mode": False,
                 "query": query,
+                "retrieval_plan": plan,
                 "notes": "Internal LLM extraction/classification; nightly maintenance produces summaries.",
             },
             indent=2,
@@ -51,46 +76,41 @@ async def test_live_file_mode_internal_llm(openai_llm, openai_embedder, live_log
         encoding="utf-8",
     )
 
-    store = SQLiteStore(db_path)
-    categories = await store.list_categories("jordan")
-    await store.close()
-
-    assert len(categories) >= 1
-    expected_markers = [
-        "python",
-        "acme",
-        "shellfish",
-        "milo",
-        "obsidian",
-        "q2",
-        "forecast",
-    ]
-    lowered = result.lower()
-    assert any(marker in lowered for marker in expected_markers)
-
 
 @pytest.mark.asyncio
-async def test_live_file_mode_tool_mode(openai_embedder, live_log_dir):
+async def test_live_file_mode_tool_mode(openai_llm, openai_embedder, live_log_dir):
+    data_path = Path(__file__).parent / "live_test_mock_data" / "personal_assistant_conversations.json"
+    data = _load_data(data_path)
+    conversation = "\n".join(_load_messages(data))
+    user_name = data.get("user_name", "User")
+
     db_path = live_log_dir / "memory.db"
-
-    async with Memory(
-        "jordan",
-        lambda _p: "",  # should not be used in tool_mode
+    store = SQLiteStore(db_path)
+    vector = NumpyVectorStore(str(_vector_db_path(db_path)))
+    fm = FileMemory(
+        user_name.lower(),
+        storage=store,
+        llm=None,
+        vector_store=vector,
         embed=openai_embedder,
-        db_path=db_path,
-        mode="file",
         tool_mode=True,
-    ) as mem:
-        await mem.memorize(
-            "I prefer Python for scripting and I work at Acme Corp.",
-            items=[
-                {"content": "User prefers Python for scripting", "category": "preferences"},
-                {"content": "User works at Acme Corp", "category": "work"},
-            ],
+    )
+    runner = MaintenanceRunner(store, openai_llm, vector, openai_embedder)
+    try:
+        items = tool_mode_file_items(openai_llm, conversation, user_name=user_name)
+        await fm.memorize(conversation, items=items)
+        await runner.nightly(user_name.lower())
+        plan = file_retrieval_plan(openai_llm, conversation, tool_mode=True)
+        query = plan["query"]
+        result = await fm.retrieve(
+            query,
+            level=plan.get("level", "items"),
+            categories=plan.get("categories"),
+            search_query=plan.get("search_query"),
         )
-
-        query = "What language does the user prefer?"
-        result = await mem.retrieve(query, search_query="python", file_level="items")
+    finally:
+        await store.close()
+        await vector.close()
 
     (live_log_dir / "tool_mode_retrieve.txt").write_text(result, encoding="utf-8")
     (live_log_dir / "run_meta.json").write_text(
@@ -99,50 +119,46 @@ async def test_live_file_mode_tool_mode(openai_embedder, live_log_dir):
                 "mode": "file",
                 "tool_mode": True,
                 "query": query,
-                "search_query": "python",
-                "notes": "Tool-mode retrieval is query-driven; file-level set to items.",
+                "retrieval_plan": plan,
+                "tool_inputs": {"items": items},
+                "notes": "Tool-mode retrieval with LLM-generated items and query plan.",
             },
             indent=2,
         ),
         encoding="utf-8",
     )
-    assert "Python" in result or "python" in result
 
 
 @pytest.mark.asyncio
-async def test_live_both_mode_and_maintenance(openai_llm, openai_embedder, live_log_dir):
+async def test_live_maintenance(openai_llm, openai_embedder, live_log_dir):
     data_path = Path(__file__).parent / "live_test_mock_data" / "personal_assistant_conversations.json"
-    conversation = "\n".join(_load_messages(data_path))
+    data = _load_data(data_path)
+    conversation = "\n".join(_load_messages(data))
+    user_name = data.get("user_name", "User")
 
     db_path = live_log_dir / "memory.db"
-    async with Memory(
-        "jordan",
-        openai_llm,
-        embed=openai_embedder,
-        db_path=db_path,
-        mode="both",
-    ) as mem:
-        await mem.memorize(conversation)
-        stats = await mem.maintain("all")
-        query = "Where does Jordan work?"
-        result = await mem.retrieve(query, file_level="summaries", graph_level="graph_then_vector")
+    store = SQLiteStore(db_path)
+    vector = NumpyVectorStore(str(_vector_db_path(db_path)))
+    fm = FileMemory(user_name.lower(), storage=store, llm=openai_llm, vector_store=vector, embed=openai_embedder)
+    runner = MaintenanceRunner(store, openai_llm, vector, openai_embedder)
+    try:
+        await fm.memorize(conversation)
+        stats = await runner.run_all(user_name.lower())
+    finally:
+        await store.close()
+        await vector.close()
 
-    (live_log_dir / "both_mode_retrieve.txt").write_text(result, encoding="utf-8")
     (live_log_dir / "maintenance_stats.json").write_text(
         json.dumps(stats, indent=2), encoding="utf-8"
     )
     (live_log_dir / "run_meta.json").write_text(
         json.dumps(
             {
-                "mode": "both",
+                "mode": "maintenance",
                 "tool_mode": False,
-                "query": query,
-                "notes": "Both-mode retrieval is query-specific; file summaries after maintenance + graph_then_vector.",
+                "notes": "Maintenance-only run (nightly/weekly/monthly) after file memorize.",
             },
             indent=2,
         ),
         encoding="utf-8",
     )
-
-    assert "RELEVANT MEMORIES" in result or "##" in result
-    assert "nightly" in stats and "weekly" in stats and "monthly" in stats

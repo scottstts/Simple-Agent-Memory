@@ -1,6 +1,6 @@
 import pytest
 
-from simple_agent_memory import Memory
+from simple_agent_memory.long_term.file_memory import FileMemory
 from simple_agent_memory.long_term.graph_memory import GraphMemory
 
 
@@ -9,26 +9,18 @@ def _raising_llm(_prompt: str) -> str:
 
 
 @pytest.mark.asyncio
-async def test_tool_mode_file_memory_no_llm(tmp_path, mock_embed):
-    db = tmp_path / "mem.db"
-    async with Memory(
-        "u1",
-        _raising_llm,
-        embed=mock_embed,
-        db_path=db,
-        mode="file",
-        tool_mode=True,
-    ) as mem:
-        await mem.memorize(
-            "I prefer Python for scripting and I work at Acme.",
-            items=[
-                {"content": "User prefers Python for scripting", "category": "preferences"},
-                {"content": "User works at Acme", "category": "work"},
-            ],
-        )
+async def test_tool_mode_file_memory_no_llm(storage):
+    fm = FileMemory("u1", storage, llm=None, tool_mode=True)
+    await fm.memorize(
+        "I prefer Python for scripting and I work at Acme.",
+        items=[
+            {"content": "User prefers Python for scripting", "category": "preferences"},
+            {"content": "User works at Acme", "category": "work"},
+        ],
+    )
 
-        result = await mem.retrieve("irrelevant", search_query="Python", file_level="items")
-        assert "Python" in result
+    result = await fm.retrieve("irrelevant", search_query="Python", level="items")
+    assert "Python" in result
 
 
 @pytest.mark.asyncio
