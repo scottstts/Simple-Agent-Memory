@@ -92,6 +92,8 @@ agent = Agent(
 
 Below is an example **LLM tool call trace** (JSON-style) showing how an agent would call the tools and receive responses:
 
+Note: file memory summaries are produced by maintenance (nightly general summary + weekly persistent summary). Tool calls should only pass atomic `items`.
+
 ```json
 [
   {
@@ -104,11 +106,7 @@ Below is an example **LLM tool call trace** (JSON-style) showing how an agent wo
           "items": [
             {"content": "User prefers Python for scripting", "category": "preferences"},
             {"content": "User works at Acme", "category": "work"}
-          ],
-          "summaries": {
-            "preferences": "- Prefers Python for scripting",
-            "work": "- Works at Acme"
-          }
+          ]
         }
       }
     ]
@@ -218,8 +216,8 @@ from simple_agent_memory.llm_clients import create_openai_client
 llm = create_openai_client("gpt-5.2")
 
 async with Memory("user_123", llm=llm) as mem:
-    await mem.maintain("nightly")   # dedup, merge
-    await mem.maintain("weekly")    # re-summarize, archive stale
+    await mem.maintain("nightly")   # dedup, merge, update summaries
+    await mem.maintain("weekly")    # append persistent summaries, archive stale
     await mem.maintain("monthly")   # reindex embeddings
 ```
 
@@ -238,40 +236,54 @@ embed = create_openai_embedder("text-embedding-3-small")
 
 async with Memory("user_123", llm=llm, embed=embed, mode="both") as mem:
     await mem.memorize("I prefer Python for scripting. I work at Acme Corp.")
+    await mem.maintain("nightly")
     context = await mem.retrieve("Write me a script", file_level="summaries")
     print(context)
 ```
 
 ## Architecture
 
-The library implements two long‑term memory architectures.
+Simple Agent Memory exposes two long‑term memory systems (file memory and graph memory) plus a maintenance loop. The recommended and primary usage is **tool mode**: your agent calls the memory tools directly, and the memory system stores/retrieves exactly what the agent decides. The optional **internal LLM mode** runs separate LLM chains to extract/classify on your behalf. These modes are not used simultaneously.
 
-### File-Based Memory
+### Tool Mode (recommended, agent‑driven)
 
-A three‑layer hierarchy that mimics how humans categorize knowledge:
+**File memory (narrative facts)**
+- **Inputs**: raw `text` plus agent‑provided atomic `items`.
+- **Storage**:  
+  - Every `text` is saved as a **resource** (immutable raw context).  
+  - Each `item` is saved as a **memory item** (content + category + source link).  
+  - If an embedder + vector store are configured, each item is embedded and indexed with metadata for semantic retrieval.
+  - **Summaries are produced by maintenance**: a general per‑category summary (nightly) and a persistent per‑category summary (weekly).
+- **Retrieval**: returns general + persistent summaries (clearly labeled), items, and/or raw resources based on the requested `level`. `search_query` can override the keyword used for item/resource lookups. Optional semantic items can be included via `vector_only` or `*_then_vector`. No internal LLM decisions are made.
 
-- **Resources** — Raw data. Immutable conversation logs.
-- **Items** — Atomic facts extracted from resources.
-- **Categories** — Evolving markdown summaries.
+**Graph memory (relational facts)**
+- **Inputs**: raw `text` plus agent‑provided triplets `{subject, predicate, object, status}`.
+- **Storage**:  
+  - Every `text` is saved as a **resource**.  
+  - Each triplet is saved to the **knowledge graph** with status (`current|past|uncertain`).  
+  - The full `text` is embedded and indexed in the vector store (graph memory requires an embedder).
+- **Retrieval**: graph lookup is driven by explicit `entities` (tool mode), with optional vector fallback/augmentation depending on `level` (`graph_only`, `graph_then_vector`, `vector_only`).
 
-**Write path (internal LLM mode):** Ingest text → extract atomic facts → classify into categories → evolve summaries.
+### Internal LLM Mode (optional, memory‑driven)
 
-**Read path (hierarchical):** Summaries → items → raw resources.
+**File memory**
+- **Inputs**: only raw `text`. The memory system uses its LLM to extract atomic facts and classify them into categories.
+- **Retrieval**: the LLM selects relevant categories and decides whether summaries are sufficient; if not, it expands to items and resources. Summaries are still produced by maintenance (nightly/weekly).
 
-### Graph-Based Memory
+**Graph memory**
+- **Inputs**: only raw `text`. The memory system extracts triplets, detects conflicts for current facts, and deactivates prior conflicting predicates.
+- **Retrieval**: the LLM extracts entities and may filter predicates; vector search can still be blended by `level`.
 
-A hybrid structure combining vector similarity with knowledge graph precision:
+### Maintenance (system‑level, independent of mode)
 
-- **Vector store** — Semantic discovery.
-- **Knowledge graph** — Subject–predicate–object triplets with status (`current|past|uncertain`).
-
-**Write path (internal LLM mode):** Extract triplets → detect replacements → mark old facts as `past_replaced` → store new triplets.
-
-**Read path (hierarchical):** Graph‑only → graph+vector → vector‑only (agent‑controlled).
+Maintenance operates on **file memory items** to keep the store compact and high‑quality:
+- **Nightly**: merges near‑duplicate items using embedding similarity, compresses them via LLM, updates embeddings/indexes, and removes merged items; also promotes frequently accessed items. It also rebuilds the **general** per‑category summaries from current items.
+- **Weekly**: appends to the **persistent** per‑category summaries using older items and archives items not accessed recently (and removes them from the vector index).
+- **Monthly**: re‑embeds all items, rebuilds the vector index, and archives very stale items.
 
 ### Both
 
-Runs file + graph in parallel. Retrieval can blend summaries + graph as you choose.
+When using the `Memory` facade in `mode="both"`, file and graph memories are written in parallel. Retrieval can blend file summaries/items/resources with graph and/or vector results based on the chosen levels.
 
 ## LLM Clients
 

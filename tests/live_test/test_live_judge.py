@@ -125,10 +125,6 @@ def _mock_context() -> dict:
                 {"content": "User prefers Python for scripting", "category": "preferences"},
                 {"content": "User works at Acme Corp", "category": "work"},
             ],
-            "summaries": {
-                "preferences": "- Prefers Python for scripting",
-                "work": "- Works at Acme Corp",
-            },
         },
         "graph_tool_mode": {
             "triplets": [
@@ -155,7 +151,7 @@ async def test_live_judge_report(openai_judge, live_log_dir):
         "and (4) maintenance stats. "
         "Your job is to judge whether the memory system behaved reasonably and robustly.\n\n"
         "Important context about the system:\n"
-        "- File-mode uses summaries + item storage. Retrieval may return summaries, then detailed items.\n"
+        "- File-mode stores items; summaries are produced by maintenance and may include general + persistent views.\n"
         "- Vector retrieval may return raw conversation text (resources). This is expected and not hallucination.\n"
         "- Tool-mode uses pre-structured inputs; retrieval is query-driven and may NOT return all stored facts.\n"
         "- Graph-mode stores triplets and may also return vector hits; prioritize whether core relations are captured.\n\n"

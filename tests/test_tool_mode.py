@@ -25,13 +25,9 @@ async def test_tool_mode_file_memory_no_llm(tmp_path, mock_embed):
                 {"content": "User prefers Python for scripting", "category": "preferences"},
                 {"content": "User works at Acme", "category": "work"},
             ],
-            summaries={
-                "preferences": "- Prefers Python for scripting",
-                "work": "- Works at Acme",
-            },
         )
 
-        result = await mem.retrieve("irrelevant", search_query="Python")
+        result = await mem.retrieve("irrelevant", search_query="Python", file_level="items")
         assert "Python" in result
 
 

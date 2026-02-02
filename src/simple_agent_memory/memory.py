@@ -78,10 +78,9 @@ class Memory:
         *,
         items: list[dict] | None = None,
         triplets: list[dict] | None = None,
-        summaries: dict[str, str] | None = None,
     ) -> None:
         if self._file_memory:
-            await self._file_memory.memorize(text, items=items, summaries=summaries)
+            await self._file_memory.memorize(text, items=items)
         if self._graph_memory:
             await self._graph_memory.memorize(text, triplets=triplets)
 
@@ -101,13 +100,9 @@ class Memory:
             use_pipeline = True
         if self._mode == "graph" and self._graph_memory:
             results = await self._graph_memory.retrieve(query, entities=entities, level=graph_level)
-            if results:
-                lines = ["=== RELEVANT MEMORIES ===\n"]
-                for r in results[:10]:
-                    lines.append(f"[{r.timestamp.isoformat()}] (confidence: {r.score:.2f})")
-                    lines.append(f"{r.text}\n")
-                lines.append("=== END MEMORIES ===")
-                return "\n".join(lines)
+            graph_context = self._format_graph_results(results)
+            if graph_context:
+                return graph_context
             return ""
 
         file_context = ""
@@ -126,6 +121,11 @@ class Memory:
                 search_query=search_query,
             )
 
+        graph_context = ""
+        if self._mode == "both" and self._graph_memory:
+            results = await self._graph_memory.retrieve(query, entities=entities, level=graph_level)
+            graph_context = self._format_graph_results(results)
+
         pipeline_context = ""
         if use_pipeline and (self._tool_mode or self._vector or not file_context):
             pipeline_context = await self._retrieval.retrieve(
@@ -135,9 +135,8 @@ class Memory:
                 search_query=search_query,
                 use_llm_query=not self._tool_mode,
             )
-        if file_context and pipeline_context:
-            return f"{file_context}\n\n{pipeline_context}"
-        return file_context or pipeline_context
+        parts = [p for p in (file_context, graph_context, pipeline_context) if p]
+        return "\n\n".join(parts)
 
     def checkpoint(self, thread_id: str) -> ShortTermMemory:
         return ShortTermMemory(thread_id, self._storage)
@@ -155,6 +154,17 @@ class Memory:
         if self._vector:
             await self._vector.close()
 
+    @staticmethod
+    def _format_graph_results(results: list) -> str:
+        if not results:
+            return ""
+        lines = ["=== RELEVANT MEMORIES ===\n"]
+        for r in results[:10]:
+            lines.append(f"[{r.timestamp.isoformat()}] (confidence: {r.score:.2f})")
+            lines.append(f"{r.text}\n")
+        lines.append("=== END MEMORIES ===")
+        return "\n".join(lines)
+
     # ── Sync wrappers ──
 
     def memorize_sync(
@@ -163,9 +173,8 @@ class Memory:
         *,
         items: list[dict] | None = None,
         triplets: list[dict] | None = None,
-        summaries: dict[str, str] | None = None,
     ) -> None:
-        asyncio.run(self.memorize(text, items=items, triplets=triplets, summaries=summaries))
+        asyncio.run(self.memorize(text, items=items, triplets=triplets))
 
     def retrieve_sync(
         self,

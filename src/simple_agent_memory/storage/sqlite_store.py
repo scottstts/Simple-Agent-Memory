@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS categories (
     category TEXT NOT NULL,
     summary TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    persistent_summary TEXT,
+    persistent_updated_at TEXT,
     PRIMARY KEY (user_id, category)
 );
 CREATE TABLE IF NOT EXISTS checkpoints (
@@ -111,6 +113,7 @@ class SQLiteStore:
             await self._db.execute("PRAGMA journal_mode=WAL")
             await self._db.executescript(SCHEMA)
             await self._ensure_triplet_status(self._db)
+            await self._ensure_category_persistent(self._db)
             await self._db.commit()
         return self._db
 
@@ -250,9 +253,13 @@ class SQLiteStore:
 
     async def save_category(self, user_id: str, category: str, summary: str) -> None:
         db = await self._conn()
+        row = await self._get_category_row(db, user_id, category)
+        persistent_summary = row["persistent_summary"] if row else None
+        persistent_updated_at = row["persistent_updated_at"] if row else None
         await db.execute(
-            "INSERT OR REPLACE INTO categories (user_id, category, summary, updated_at) VALUES (?, ?, ?, ?)",
-            (user_id, category, summary, _ts(_now())),
+            "INSERT OR REPLACE INTO categories (user_id, category, summary, updated_at, persistent_summary, persistent_updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, category, summary, _ts(_now()), persistent_summary, persistent_updated_at),
         )
         await db.commit()
 
@@ -264,6 +271,39 @@ class SQLiteStore:
         )
         row = await cur.fetchone()
         return row["summary"] if row else None
+
+    async def save_persistent_category(self, user_id: str, category: str, summary: str) -> None:
+        db = await self._conn()
+        row = await self._get_category_row(db, user_id, category)
+        general_summary = row["summary"] if row else ""
+        general_updated_at = row["updated_at"] if row else _ts(_now())
+        await db.execute(
+            "INSERT OR REPLACE INTO categories (user_id, category, summary, updated_at, persistent_summary, persistent_updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, category, general_summary, general_updated_at, summary, _ts(_now())),
+        )
+        await db.commit()
+
+    async def load_persistent_category(self, user_id: str, category: str) -> str | None:
+        db = await self._conn()
+        cur = await db.execute(
+            "SELECT persistent_summary FROM categories WHERE user_id = ? AND category = ?",
+            (user_id, category),
+        )
+        row = await cur.fetchone()
+        value = row["persistent_summary"] if row else None
+        return value if value else None
+
+    async def load_persistent_updated_at(self, user_id: str, category: str) -> datetime | None:
+        db = await self._conn()
+        cur = await db.execute(
+            "SELECT persistent_updated_at FROM categories WHERE user_id = ? AND category = ?",
+            (user_id, category),
+        )
+        row = await cur.fetchone()
+        if not row or not row["persistent_updated_at"]:
+            return None
+        return _parse_ts(row["persistent_updated_at"])
 
     async def list_categories(self, user_id: str) -> list[str]:
         db = await self._conn()
@@ -361,6 +401,22 @@ class SQLiteStore:
         cols = [row["name"] async for row in cur]
         if "status" not in cols:
             await db.execute("ALTER TABLE triplets ADD COLUMN status TEXT DEFAULT 'current'")
+
+    async def _ensure_category_persistent(self, db: aiosqlite.Connection) -> None:
+        cur = await db.execute("PRAGMA table_info(categories)")
+        cols = [row["name"] async for row in cur]
+        if "persistent_summary" not in cols:
+            await db.execute("ALTER TABLE categories ADD COLUMN persistent_summary TEXT")
+        if "persistent_updated_at" not in cols:
+            await db.execute("ALTER TABLE categories ADD COLUMN persistent_updated_at TEXT")
+
+    async def _get_category_row(self, db: aiosqlite.Connection, user_id: str, category: str) -> aiosqlite.Row | None:
+        cur = await db.execute(
+            "SELECT summary, updated_at, persistent_summary, persistent_updated_at "
+            "FROM categories WHERE user_id = ? AND category = ?",
+            (user_id, category),
+        )
+        return await cur.fetchone()
 
     async def get_all_triplets(self, user_id: str) -> list[Triplet]:
         db = await self._conn()

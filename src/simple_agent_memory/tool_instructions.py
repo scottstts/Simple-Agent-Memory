@@ -9,7 +9,6 @@ Tools:
    Inputs:
    - text: original user utterance (string)
    - items: list of {content, category}
-   - summaries: dict {category: markdown summary}
    Output:
    - list of stored MemoryItem objects (ids/metadata)
 
@@ -17,16 +16,16 @@ Tools:
    When to use: answer questions about preferences, schedules, personal info.
    Inputs:
    - query: user question
-   - level: "summaries" | "items" | "resources" | "auto"
+   - level: "summaries" | "items" | "resources" | "auto" | "vector_only" | "summaries_then_vector" | "items_then_vector" | "resources_then_vector"
    - categories: list of categories to load (optional)
    - search_query: keyword query (optional)
    Output:
-   - formatted text block (summaries/items/resources)
+   - formatted text block (summaries/items/resources + optional semantic items)
 
 Guidance:
 - Keep items atomic and explicit.
 - Prefer these categories when they fit: work, preferences, personal, health, schedule, travel, tech, relationships.
-- Summaries should be short, current, and conflict‑resolved.
+- Summaries are produced by maintenance; retrieval returns both general and persistent summaries when available.
 """
 
 

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import inspect
 
-from ..llm import invoke, parse_bool_response, parse_json_response
-from ..prompts import CLASSIFY_ITEMS, EVOLVE_SUMMARY, EXTRACT_ITEMS, SELECT_CATEGORIES, SUFFICIENCY_CHECK
+from ..llm import parse_bool_response, parse_json_response
+from ..prompts import CLASSIFY_ITEMS, EXTRACT_ITEMS, SELECT_CATEGORIES, SUFFICIENCY_CHECK
 from ..storage.base import Storage
 from ..types import EmbedCallable, LLMCallable, MemoryItem, _id, _now
 from ..vector.base import VectorStore
@@ -36,7 +36,6 @@ class FileMemory:
         text: str,
         *,
         items: list[dict] | None = None,
-        summaries: dict[str, str] | None = None,
     ) -> list[MemoryItem]:
         resource_id = await self._storage.save_resource(self.user_id, text)
         if self._tool_mode:
@@ -49,13 +48,11 @@ class FileMemory:
             raw_items = await self._extract_items(text)
             classified = await self._classify_items(raw_items)
 
-        by_category: dict[str, list[str]] = {}
         saved_items: list[MemoryItem] = []
 
         for item in classified:
             cat = item.get("category", "general")
             content = item.get("content", "")
-            by_category.setdefault(cat, []).append(content)
 
             mem = MemoryItem(
                 id=_id(), user_id=self.user_id, content=content,
@@ -80,16 +77,6 @@ class FileMemory:
                 )
             saved_items.append(mem)
 
-        if self._tool_mode:
-            if summaries:
-                for category, summary in summaries.items():
-                    await self._storage.save_category(self.user_id, category, summary)
-        else:
-            for category, contents in by_category.items():
-                existing = await self._storage.load_category(self.user_id, category) or ""
-                updated = await self._evolve_summary(category, existing, contents)
-                await self._storage.save_category(self.user_id, category, updated)
-
         return saved_items
 
     async def retrieve(
@@ -100,12 +87,19 @@ class FileMemory:
         categories: list[str] | None = None,
         search_query: str | None = None,
     ) -> str:
-        if self._tool_mode and level == "auto":
-            level = "summaries"
+        vector_only = level == "vector_only"
+        vector_after = level.endswith("_then_vector")
+        base_level = level[:-len("_then_vector")] if vector_after else level
+
+        if self._tool_mode and base_level == "auto":
+            base_level = "summaries"
 
         effective_query = search_query or query
+        if vector_only:
+            return await self._format_vector_results(effective_query)
+
         if self._tool_mode:
-            if level == "items" or level == "resources":
+            if base_level == "items" or base_level == "resources":
                 items = await self._storage.search_items(self.user_id, effective_query)
                 if items:
                     for item in items:
@@ -116,42 +110,58 @@ class FileMemory:
                     result = f"## Retrieved Items\n{item_text}"
                 else:
                     result = ""
-                if level == "resources":
+                if base_level == "resources":
                     resources = await self._storage.search_resources(self.user_id, effective_query)
                     if resources:
                         result = (result + "\n\n") if result else ""
                         result += "## Raw Context\n" + "\n---\n".join(resources[:3])
+                if vector_after:
+                    vector_section = await self._format_vector_results(effective_query)
+                    if vector_section:
+                        return result + ("\n\n" if result else "") + vector_section
                 return result
 
             # summaries only
             cats = categories or await self._storage.list_categories(self.user_id)
-            summaries = {}
+            general: dict[str, str] = {}
+            persistent: dict[str, str] = {}
             for cat in cats:
-                s = await self._storage.load_category(self.user_id, cat)
-                if s:
-                    summaries[cat] = s
-            return self._format_summaries(summaries) if summaries else ""
+                g = await self._storage.load_category(self.user_id, cat)
+                if g:
+                    general[cat] = g
+                p = await self._storage.load_persistent_category(self.user_id, cat)
+                if p:
+                    persistent[cat] = p
+            result = self._format_summaries(general, persistent) if general or persistent else ""
+            if vector_after:
+                vector_section = await self._format_vector_results(effective_query)
+                if vector_section:
+                    return result + ("\n\n" if result else "") + vector_section
+            return result
 
         all_categories = await self._storage.list_categories(self.user_id)
-        if not all_categories:
-            return ""
-
-        relevant = categories or await self._select_categories(query, all_categories)
-        if not relevant:
+        relevant = categories or (await self._select_categories(query, all_categories) if all_categories else [])
+        if not relevant and all_categories:
             relevant = all_categories
-        summaries = {}
+        general: dict[str, str] = {}
+        persistent: dict[str, str] = {}
         for cat in relevant:
-            s = await self._storage.load_category(self.user_id, cat)
-            if s:
-                summaries[cat] = s
+            g = await self._storage.load_category(self.user_id, cat)
+            if g:
+                general[cat] = g
+            p = await self._storage.load_persistent_category(self.user_id, cat)
+            if p:
+                persistent[cat] = p
 
-        if not summaries:
-            return ""
+        if base_level == "summaries":
+            result = self._format_summaries(general, persistent)
+            if vector_after:
+                vector_section = await self._format_vector_results(effective_query)
+                if vector_section:
+                    return result + ("\n\n" if result else "") + vector_section
+            return result
 
-        if level == "summaries":
-            return self._format_summaries(summaries)
-
-        if level == "items":
+        if base_level == "items":
             items = await self._storage.search_items(self.user_id, effective_query)
             if items:
                 item_text = "\n".join(f"- {i.content}" for i in items)
@@ -159,10 +169,20 @@ class FileMemory:
                     item.access_count += 1
                     item.accessed_at = _now()
                     await self._storage.update_item(item)
-                return self._format_summaries(summaries) + f"\n\n## Detailed Items\n{item_text}"
-            return self._format_summaries(summaries)
+                result = self._format_summaries(general, persistent) + f"\n\n## Detailed Items\n{item_text}"
+                if vector_after:
+                    vector_section = await self._format_vector_results(effective_query)
+                    if vector_section:
+                        return result + "\n\n" + vector_section
+                return result
+            result = self._format_summaries(general, persistent)
+            if vector_after:
+                vector_section = await self._format_vector_results(effective_query)
+                if vector_section:
+                    return result + ("\n\n" if result else "") + vector_section
+            return result
 
-        if level == "resources":
+        if base_level == "resources":
             items = await self._storage.search_items(self.user_id, effective_query)
             item_section = ""
             if items:
@@ -175,16 +195,32 @@ class FileMemory:
 
             resources = await self._storage.search_resources(self.user_id, effective_query)
             if resources:
-                return (
-                    self._format_summaries(summaries)
+                result = (
+                    self._format_summaries(general, persistent)
                     + item_section
                     + "\n\n## Raw Context\n"
                     + "\n---\n".join(resources[:3])
                 )
-            return self._format_summaries(summaries) + item_section
+                if vector_after:
+                    vector_section = await self._format_vector_results(effective_query)
+                    if vector_section:
+                        return result + "\n\n" + vector_section
+                return result
+            result = self._format_summaries(general, persistent) + item_section
+            if vector_after:
+                vector_section = await self._format_vector_results(effective_query)
+                if vector_section:
+                    return result + ("\n\n" if result else "") + vector_section
+            return result
 
-        if await self._is_sufficient(query, summaries):
-            return self._format_summaries(summaries)
+        if general or persistent:
+            if await self._is_sufficient(query, general, persistent):
+                result = self._format_summaries(general, persistent)
+                if vector_after:
+                    vector_section = await self._format_vector_results(effective_query)
+                    if vector_section:
+                        return result + ("\n\n" if result else "") + vector_section
+                return result
 
         items = await self._storage.search_items(self.user_id, effective_query)
         if items:
@@ -193,13 +229,32 @@ class FileMemory:
                 item.access_count += 1
                 item.accessed_at = _now()
                 await self._storage.update_item(item)
-            return self._format_summaries(summaries) + f"\n\n## Detailed Items\n{item_text}"
+            result = self._format_summaries(general, persistent) + f"\n\n## Detailed Items\n{item_text}"
+            if vector_after:
+                vector_section = await self._format_vector_results(effective_query)
+                if vector_section:
+                    return result + "\n\n" + vector_section
+            return result
 
         resources = await self._storage.search_resources(self.user_id, effective_query)
         if resources:
-            return self._format_summaries(summaries) + "\n\n## Raw Context\n" + "\n---\n".join(resources[:3])
+            result = (
+                self._format_summaries(general, persistent)
+                + "\n\n## Raw Context\n"
+                + "\n---\n".join(resources[:3])
+            )
+            if vector_after:
+                vector_section = await self._format_vector_results(effective_query)
+                if vector_section:
+                    return result + "\n\n" + vector_section
+            return result
 
-        return self._format_summaries(summaries)
+        result = self._format_summaries(general, persistent)
+        if vector_after:
+            vector_section = await self._format_vector_results(effective_query)
+            if vector_section:
+                return result + ("\n\n" if result else "") + vector_section
+        return result
 
     async def _extract_items(self, text: str) -> list[dict]:
         return await parse_json_response(self._llm, EXTRACT_ITEMS.format(text=text))
@@ -218,17 +273,6 @@ class FileMemory:
         )
         return result
 
-    async def _evolve_summary(self, category: str, existing: str, new_items: list[str]) -> str:
-        items_text = "\n".join(f"- {m}" for m in new_items)
-        return await invoke(
-            self._llm,
-            EVOLVE_SUMMARY.format(
-                category=category,
-                existing=existing or "No existing summary.",
-                new_items=items_text,
-            ),
-        )
-
     async def _select_categories(self, query: str, categories: list[str]) -> list[str]:
         cat_text = ", ".join(categories)
         result = await parse_json_response(
@@ -236,19 +280,68 @@ class FileMemory:
         )
         return [c for c in result if c in categories]
 
-    async def _is_sufficient(self, query: str, summaries: dict[str, str]) -> bool:
-        summary_text = "\n\n".join(f"### {k}\n{v}" for k, v in summaries.items())
+    async def _is_sufficient(self, query: str, general: dict[str, str], persistent: dict[str, str]) -> bool:
+        parts: list[str] = []
+        for cat in sorted(set(general) | set(persistent)):
+            if cat in general:
+                parts.append(f"### {cat} (general)\n{general[cat]}")
+            if cat in persistent:
+                parts.append(f"### {cat} (persistent)\n{persistent[cat]}")
+        summary_text = "\n\n".join(parts)
         return await parse_bool_response(
             self._llm, SUFFICIENCY_CHECK.format(query=query, summaries=summary_text)
         )
 
     @staticmethod
-    def _format_summaries(summaries: dict[str, str]) -> str:
-        parts = [
-            f"## {cat}\n{FileMemory._clean_summary(cat, text)}"
-            for cat, text in summaries.items()
-        ]
+    def _format_summaries(general: dict[str, str], persistent: dict[str, str]) -> str:
+        parts: list[str] = []
+        for cat in sorted(set(general) | set(persistent)):
+            section_parts: list[str] = []
+            if cat in general:
+                section_parts.append(
+                    "General summary (all items):\n" + FileMemory._clean_summary(cat, general[cat])
+                )
+            if cat in persistent:
+                section_parts.append(
+                    "Persistent summary (long-lived items):\n" + FileMemory._clean_summary(cat, persistent[cat])
+                )
+            if section_parts:
+                parts.append(f"## {cat}\n" + "\n\n".join(section_parts))
         return "\n\n".join(parts)
+
+    async def _format_vector_results(self, query: str) -> str:
+        results = await self._vector_search(query)
+        if not results:
+            return ""
+        lines = ["## Semantic Items"]
+        updated: set[str] = set()
+        for text, score, item_id, category in results:
+            cat_label = f" [{category}]" if category else ""
+            lines.append(f"- {text}{cat_label} (score: {score:.2f})")
+            if item_id and item_id not in updated:
+                item = await self._storage.get_item_by_id(item_id)
+                if item:
+                    item.access_count += 1
+                    item.accessed_at = _now()
+                    await self._storage.update_item(item)
+                    updated.add(item_id)
+        return "\n".join(lines)
+
+    async def _vector_search(self, query: str) -> list[tuple[str, float, str | None, str | None]]:
+        if not self._vector or not self._embed:
+            return []
+        result = self._embed(query)
+        embedding = await result if inspect.isawaitable(result) else result
+        results = await self._vector.search(
+            embedding, top_k=20, filter={"user_id": self.user_id, "type": "item"}
+        )
+        output: list[tuple[str, float, str | None, str | None]] = []
+        for rid, score, meta in results:
+            text = meta.get("text", rid)
+            item_id = rid if meta.get("type") == "item" else None
+            category = meta.get("category")
+            output.append((text, score, item_id, category))
+        return output
 
     @staticmethod
     def _clean_summary(category: str, text: str) -> str:

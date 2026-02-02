@@ -33,6 +33,7 @@ async def test_live_file_mode_internal_llm(openai_llm, openai_embedder, live_log
         mode="file",
     ) as mem:
         await mem.memorize(conversation)
+        await mem.maintain("nightly")
         query = "What programming language does Jordan prefer?"
         result = await mem.retrieve(query, file_level="summaries")
 
@@ -43,7 +44,7 @@ async def test_live_file_mode_internal_llm(openai_llm, openai_embedder, live_log
                 "mode": "file",
                 "tool_mode": False,
                 "query": query,
-                "notes": "Internal LLM extraction/classification/summarization. File-level set to summaries.",
+                "notes": "Internal LLM extraction/classification; nightly maintenance produces summaries.",
             },
             indent=2,
         ),
@@ -86,10 +87,6 @@ async def test_live_file_mode_tool_mode(openai_embedder, live_log_dir):
                 {"content": "User prefers Python for scripting", "category": "preferences"},
                 {"content": "User works at Acme Corp", "category": "work"},
             ],
-            summaries={
-                "preferences": "- Prefers Python for scripting",
-                "work": "- Works at Acme Corp",
-            },
         )
 
         query = "What language does the user prefer?"
@@ -126,9 +123,9 @@ async def test_live_both_mode_and_maintenance(openai_llm, openai_embedder, live_
         mode="both",
     ) as mem:
         await mem.memorize(conversation)
+        stats = await mem.maintain("all")
         query = "Where does Jordan work?"
         result = await mem.retrieve(query, file_level="summaries", graph_level="graph_then_vector")
-        stats = await mem.maintain("all")
 
     (live_log_dir / "both_mode_retrieve.txt").write_text(result, encoding="utf-8")
     (live_log_dir / "maintenance_stats.json").write_text(
@@ -140,7 +137,7 @@ async def test_live_both_mode_and_maintenance(openai_llm, openai_embedder, live_
                 "mode": "both",
                 "tool_mode": False,
                 "query": query,
-                "notes": "Both-mode retrieval is query-specific; file summaries + graph_then_vector.",
+                "notes": "Both-mode retrieval is query-specific; file summaries after maintenance + graph_then_vector.",
             },
             indent=2,
         ),

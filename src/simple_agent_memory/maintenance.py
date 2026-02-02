@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 import numpy as np
 
@@ -21,10 +22,10 @@ class MaintenanceRunner:
         self._embed = embed
 
     async def nightly(self, user_id: str) -> dict:
-        stats = {"merged": 0, "promoted": 0}
+        stats = {"merged": 0, "promoted": 0, "summarized": 0}
 
         items = await self._storage.get_all_items(user_id)
-        if len(items) < 2:
+        if not items:
             return stats
 
         embeddings = [i for i in items if i.embedding]
@@ -82,14 +83,9 @@ class MaintenanceRunner:
             await self._storage.update_item(item)
             stats["promoted"] += 1
 
-        return stats
-
-    async def weekly(self, user_id: str) -> dict:
-        stats = {"summarized": 0, "archived": 0}
-
-        old_items = await self._storage.get_items_older_than(user_id, days=30)
+        items = await self._storage.get_all_items(user_id)
         by_cat: dict[str, list[str]] = {}
-        for item in old_items:
+        for item in items:
             by_cat.setdefault(item.category, []).append(item.content)
 
         for cat, contents in by_cat.items():
@@ -97,10 +93,55 @@ class MaintenanceRunner:
             items_text = "\n".join(f"- {c}" for c in contents)
             updated = await invoke(
                 self._llm,
-                EVOLVE_SUMMARY.format(category=cat, existing=existing, new_items=items_text),
+                EVOLVE_SUMMARY.format(
+                    category=cat,
+                    existing=existing or "No existing summary.",
+                    new_items=items_text,
+                ),
             )
             await self._storage.save_category(user_id, cat, updated)
             stats["summarized"] += 1
+
+        return stats
+
+    async def weekly(self, user_id: str) -> dict:
+        stats = {"persistent_appended": 0, "archived": 0}
+
+        old_items = await self._storage.get_items_older_than(user_id, days=30)
+        by_cat: dict[str, list] = {}
+        for item in old_items:
+            by_cat.setdefault(item.category, []).append(item)
+        now = _now()
+        cutoff = now - timedelta(days=30)
+
+        for cat, contents in by_cat.items():
+            last_updated = await self._storage.load_persistent_updated_at(user_id, cat)
+            if last_updated:
+                lower_bound = last_updated - timedelta(days=30)
+                window_items = [
+                    c for c in contents if lower_bound < c.created_at <= cutoff
+                ]
+            else:
+                window_items = contents
+
+            if not window_items:
+                continue
+
+            items_text = "\n".join(f"- {c.content}" for c in window_items)
+            chunk = await invoke(
+                self._llm,
+                EVOLVE_SUMMARY.format(
+                    category=cat,
+                    existing="No existing summary.",
+                    new_items=items_text,
+                ),
+            )
+            existing_persistent = await self._storage.load_persistent_category(user_id, cat) or ""
+            stamp = now.date().isoformat()
+            block = f"### {stamp}\n{chunk.strip()}"
+            updated = block if not existing_persistent else f"{existing_persistent}\n\n{block}"
+            await self._storage.save_persistent_category(user_id, cat, updated)
+            stats["persistent_appended"] += 1
 
         stale = await self._storage.get_items_not_accessed_since(user_id, days=90)
         for item in stale:
